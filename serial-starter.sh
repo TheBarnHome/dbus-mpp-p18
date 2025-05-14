@@ -211,6 +211,7 @@ echo "serstart starting"
 
 eval $(load_config "$SS_CONFIG")
 
+echo "looking for hidraw"
 while true; do
     HIDDEVS=$(ls /dev/hidraw* 2>/dev/null | xargs -n1 basename)
     for HID in $HIDDEVS; do
