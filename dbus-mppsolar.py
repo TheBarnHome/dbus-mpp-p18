@@ -121,24 +121,24 @@ def setMaxChargingVoltage(bulk, float):
     logging.warning("Fail to set max charging voltage to {} and {}".format(bulk, float), exc_info=True)
     return True
 
-def setMaxChargingCurrent(current):
+def setMaxChargingCurrent(id, current):
     #MNCHGC<mnnn><cr>: Setting max charging current (More than 100A)
     #  Setting value can be gain by QMCHGCR command.
     #  nnn is max charging current, m is parallel number.
     try:
         roundedCurrent = min(max (0, round(current / 10 / numberOfChargers) * 10), 80)
-        return runInverterCommands('set-max-charge-current', (roundedCurrent,))
+        return runInverterCommands('set-max-charge-current', (id, roundedCurrent,))
     except:
         logging.warning("Fail to set max charging current to {:d}".format(current))
         return True
     
-def setMaxUtilityChargingCurrent(current):
+def setMaxUtilityChargingCurrent(id, current):
     #MUCHGC<nnn><cr>: Setting utility max charging current
     #  Setting value can be gain by QMCHGCR command.
     #  nnn is max charging current, m is parallel number.
     roundedCurrent = min(max(2, round(current / 10 / numberOfChargers) * 10), 80)
     try:
-       return runInverterCommands('set-max-ac-charge-current', (roundedCurrent,))
+       return runInverterCommands('set-max-ac-charge-current', (id, roundedCurrent,))
     except:
         logging.warning("Fail to set max charging current to {:d}".format(current))
         return True
@@ -366,8 +366,8 @@ class DbusMppSolarService(object):
         except:
             logging.warning("bulkVoltage and/or floatVoltage not defined.")
         try:
-            setMaxChargingCurrent(systemMaxChargeCurrent.get_value())
-            setMaxUtilityChargingCurrent(systemMaxChargeCurrent.get_value())
+            setMaxChargingCurrent(0, systemMaxChargeCurrent.get_value())
+            setMaxUtilityChargingCurrent(0 systemMaxChargeCurrent.get_value())
         except:
             logging.warning("Max charge current not defined.", exc_info=True)
         
