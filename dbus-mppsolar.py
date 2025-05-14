@@ -369,7 +369,7 @@ class DbusMppSolarService(object):
             setMaxChargingCurrent(systemMaxChargeCurrent.get_value())
             setMaxUtilityChargingCurrent(systemMaxChargeCurrent.get_value())
         except:
-            logging.warning("Max charge current not defined.")
+            logging.warning("Max charge current not defined.", exc_info=True)
         
         try:
             generated = runInverterCommands('get-total-generated')
