@@ -1,0 +1,19 @@
+{
+   "fault_code":0,
+   "line_fail":true,
+   "output_circuit_short":false,
+   "inverter_over_temperature":false,
+   "fan_lock":false,
+   "battery_voltage_high":false,
+   "battery_low":false,
+   "battery_under":false,
+   "over_load":false,
+   "eeprom_fail":true,
+   "power_limit":false,
+   "pv1_voltage_high":false,
+   "pv2_voltage_high":false,
+   "mppt1_overload_warning":false,
+   "mppt2_overload_warning":false,
+   "battery_too_low_to_charge_for_scc1":false,
+   "battery_too_low_to_charge_for_scc2":false
+}

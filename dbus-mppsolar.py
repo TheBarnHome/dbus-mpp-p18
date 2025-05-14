@@ -116,7 +116,7 @@ def setMaxChargingVoltage(bulk, float):
     #MCHGV : Setting bulk and float voltage
     # For PI18 : MCHGV552,540 will set Bulk - CV voltage [480~584] in 0.1V xxx, Float voltage [480~584] in 0.1V
    try:
-    return runInverterCommands('set-max-charge-voltage', (int(bulk*10), int(float*10)))
+    return runInverterCommands('set-max-charge-voltage', (round(bulk, 1), round(float, 1)))
    except:
     logging.warning("Fail to set max charging voltage to {} and {}".format(bulk, float), exc_info=True)
     return True
