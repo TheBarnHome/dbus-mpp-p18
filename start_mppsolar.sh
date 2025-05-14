@@ -7,7 +7,7 @@ DEVICE_PATH="$1"
 DEVICE_NAME=$(basename "$DEVICE_PATH")
 SERVICE_NAME="dbus-mppsolar.${DEVICE_NAME}"
 SERVICE_DIR="/service"
-SERVICE_PATH="/etc/sv/${SERVICE_NAME}"
+SERVICE_PATH="'/var/volatile/services/${SERVICE_NAME}"
 LOG_DIR="/var/log/${SERVICE_NAME}"
 SCRIPT_PATH="/data/etc/dbus-mppsolar/dbus_mppsolar.py"
 
