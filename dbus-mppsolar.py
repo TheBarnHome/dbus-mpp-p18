@@ -160,7 +160,6 @@ def dbusconnection():
 class DbusMppSolarService(object):
     def __init__(self, tty, deviceinstance, productname='MPPSolar', connection='MPPSolar interface', json_file_path='/data/etc/dbus-mppsolar/config.json'):
         global numberOfChargers
-        self._tty = tty
         self._queued_updates = []
         
         # For production history
@@ -176,16 +175,16 @@ class DbusMppSolarService(object):
         if os.path.exists(json_file_path):
             with open(json_file_path, 'r') as json_file:
                 config = json.load(json_file)
-            if self._tty in config:
-                deviceinstance = config[self._tty].get('deviceinstance', 0)
-                productname_value = config[self._tty].get('productname', None)
-                self.updateInterval = config[self._tty].get('updateInterval', 10000)
+            if tty in config:
+                deviceinstance = config[tty].get('deviceinstance', 0)
+                productname_value = config[tty].get('productname', None)
+                self.updateInterval = config[tty].get('updateInterval', 10000)
                 if productname_value is not None:
                     productname = productname_value
                     logging.warning("Product named from config : {}".format(productname_value))
-                numberOfChargers = config[self._tty].get('numberOfChargers', 1)
+                numberOfChargers = config[tty].get('numberOfChargers', 1)
 
-                start_inverterd(self._tty, deviceinstance)
+                start_inverterd(tty, deviceinstance)
 
         if not os.path.exists("{}".format(tty)):
             logging.warning("Inverter not connected on {}".format(tty))
@@ -194,8 +193,8 @@ class DbusMppSolarService(object):
         logging.warning(f"Connected to inverter on {tty}, setting up dbus with /DeviceInstance = {deviceinstance}")
         
         # Create the services
-        self._dbusinverter = VeDbusService(f'com.victronenergy.inverter.mppsolar-inverter.{self._tty.split('/dev/')}', dbusconnection())
-        self._dbusmppt = VeDbusService(f'com.victronenergy.solarcharger.mppsolar-charger.{self._tty.split('/dev/')}', dbusconnection())
+        self._dbusinverter = VeDbusService(f'com.victronenergy.inverter.mppsolar-inverter.{tty.split('/dev/')}', dbusconnection())
+        self._dbusmppt = VeDbusService(f'com.victronenergy.solarcharger.mppsolar-charger.{tty.split('/dev/')}', dbusconnection())
 
         # Set up default paths
         self.setupInverterDefaultPaths(self._dbusinverter, connection, deviceinstance, f"Inverter {productname}")
