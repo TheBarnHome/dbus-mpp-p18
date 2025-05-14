@@ -5,7 +5,7 @@ set -e
 CONF_FILE="/etc/venus/serial-starter.conf"
 BACKUP_FILE="${CONF_FILE}.bak.$(date +%F_%T)"
 INSTALL_DIR="/data/etc/dbus-mppsolar"
-SERVICE_TEMPLATE_SRC="$INSTALL_DIR/service/*"
+SERVICE_TEMPLATE_SRC="$INSTALL_DIR/service"
 SERVICE_TEMPLATE_DST="/opt/victronenergy/service-templates/dbus-mppsolar"
 
 echo "🔧 Backing up $CONF_FILE to $BACKUP_FILE"
