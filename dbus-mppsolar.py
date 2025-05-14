@@ -176,7 +176,7 @@ class DbusMppSolarService(object):
         if os.path.exists(json_file_path):
             with open(json_file_path, 'r') as json_file:
                 config = json.load(json_file)
-            if tty in config:
+            if self._tty in config:
                 deviceinstance = config[self._tty].get('deviceinstance', 0)
                 productname_value = config[self._tty].get('productname', None)
                 self.updateInterval = config[self._tty].get('updateInterval', 10000)
@@ -187,15 +187,15 @@ class DbusMppSolarService(object):
 
                 start_inverterd(tty, deviceinstance)
 
-        if not os.path.exists("/dev/{}".format(tty)):
+        if not os.path.exists("{}".format(tty)):
             logging.warning("Inverter not connected on {}".format(tty))
             sys.exit()
 
         logging.warning(f"Connected to inverter on {tty} ({self._invProtocol}), setting up dbus with /DeviceInstance = {deviceinstance}")
         
         # Create the services
-        self._dbusinverter = VeDbusService(f'com.victronenergy.inverter.mppsolar-inverter.{tty}', dbusconnection())
-        self._dbusmppt = VeDbusService(f'com.victronenergy.solarcharger.mppsolar-charger.{tty}', dbusconnection())
+        self._dbusinverter = VeDbusService(f'com.victronenergy.inverter.mppsolar-inverter.{self._tty}', dbusconnection())
+        self._dbusmppt = VeDbusService(f'com.victronenergy.solarcharger.mppsolar-charger.{self._tty}', dbusconnection())
 
         # Set up default paths
         self.setupInverterDefaultPaths(self._dbusinverter, connection, deviceinstance, f"Inverter {productname}")
@@ -495,7 +495,7 @@ def main():
 
     mainloop = GLib.MainLoop()
     mainloop.run()
-    
+
     atexit.register(stop_inverterd)  # S'assure que inverterd est tué à la fin du script
 
 if __name__ == "__main__":
