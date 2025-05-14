@@ -21,7 +21,9 @@ if [ ! -d "$SERVICE_PATH" ]; then
   echo "[$TIMESTAMP] 📝 Génération du script de lancement" >> "$LOGFILE"
   cat > "$SERVICE_PATH/run" <<EOF
 #!/bin/sh
-exec /usr/bin/env python3 ${SCRIPT_PATH} --serial /dev/${DEVICE_NAME}
+echo "*** starting dbus-mppsolar ***"
+exec 2>&1
+exec /data/etc/dbus-mppsolar/start-dbus-mppsolar.sh ${DEVICE_NAME}
 EOF
   chmod +x "$SERVICE_PATH/run"
   echo "[$TIMESTAMP] ✅ Script de lancement créé et rendu exécutable." >> "$LOGFILE"
@@ -29,7 +31,8 @@ EOF
   echo "[$TIMESTAMP] 📝 Génération du script de log" >> "$LOGFILE"
   cat > "$SERVICE_PATH/log/run" <<EOF
 #!/bin/sh
-exec svlogd -tt ${LOG_DIR}
+exec 2>&1
+exec multilog t s25000 n4 /var/log/dbus-mppsolar.${DEVICE_NAME}
 EOF
   chmod +x "$SERVICE_PATH/log/run"
   echo "[$TIMESTAMP] ✅ Script de log créé et rendu exécutable." >> "$LOGFILE"
