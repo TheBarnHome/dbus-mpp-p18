@@ -378,7 +378,7 @@ class DbusMppSolarService(object):
             rated = runInverterCommands('get-rated')
             alerts = runInverterCommands('get-errors')
 
-            logging.warning(data)
+            logging.warning(mode)
         except:
             logging.warning("Error in update PI18 loop.", exc_info=True)
             self._updateInternal()
@@ -395,34 +395,34 @@ class DbusMppSolarService(object):
                 i['/State'] = 0 # OFF
 
             # Normal operation, read data
-            i['/Dc/0/Voltage'] = data.get('battery_voltage', i['/Dc/0/Voltage'])
+            i['/Dc/0/Voltage'] = data.get('battery_voltage', {}).get("value", i['/Dc/0/Voltage'])
 
-            i['/Ac/Out/L1/V'] = data.get('ac_output_voltage', i['/Ac/Out/L1/V'])
-            i['/Ac/Out/L1/P'] = data.get('ac_output_active_power', i['/Ac/Out/L1/P'])
+            i['/Ac/Out/L1/V'] = data.get('ac_output_voltage', {}).get("value", i['/Ac/Out/L1/V'])
+            i['/Ac/Out/L1/P'] = data.get('ac_output_active_power', {}).get("value", i['/Ac/Out/L1/P'])
             if i['/Ac/Out/L1/V'] != 0 and i['/Ac/Out/L1/P'] != 0:
                 output_current = i['/Ac/Out/L1/P'] / i['/Ac/Out/L1/V']
                 i['/Ac/Out/L1/I'] = output_current
-            i['/Ac/Out/L1/F'] = data.get('ac_output_frequency', i['/Ac/Out/L1/F'])
-            i['/Temperature'] = data.get('inverter_heat_sink_temperature', i['/Temperature'])
+            i['/Ac/Out/L1/F'] = data.get('ac_output_frequency', {}).get("value", i['/Ac/Out/L1/F'])
+            i['/Temperature'] = data.get('inverter_heat_sink_temperature', {}).get("value", i['/Temperature'])
 
             # Solar charger
-            if data.get('pv1_input_power', 0) > 0:
+            if data.get('pv1_input_power', {}).get("value", 0) > 0:
                 m['/State'] = 3
             else:
                 m['/State'] = 0
-            m['/Pv/0/V'] = data.get('pv1_input_voltage', m['/Pv/0/V'])
-            m['/Pv/V'] = data.get('pv1_input_voltage', m['/Pv/V'])
-            m['/Pv/0/P'] = data.get('pv1_input_power', m['/Pv/0/P'])
-            m['/Yield/Power'] = data.get('pv1_input_power', m['/Yield/Power'])
+            m['/Pv/0/V'] = data.get('pv1_input_voltage', {}).get("value", m['/Pv/0/V'])
+            m['/Pv/V'] = data.get('pv1_input_voltage', {}).get("value", m['/Pv/V'])
+            m['/Pv/0/P'] = data.get('pv1_input_power', {}).get("value", m['/Pv/0/P'])
+            m['/Yield/Power'] = data.get('pv1_input_power', {}).get("value", m['/Yield/Power'])
             if generated.get('total_pv_generated_energy') != 0 and generated.get('total_pv_generated_energy') != None:
                 m['/Yield/User'] = generated.get('total_pv_generated_energy') / 1000
                 m['/Yield/System'] = generated.get('total_pv_generated_energy') / 1000
-            m['/MppOperationMode'] = 2 if (data.get('pv1_input_power', 0) > 0) else 0
+            m['/MppOperationMode'] = 2 if (data.get('pv1_input_power', {}).get("value", 0) > 0) else 0
             m['/Link/ChargeCurrent'] =  rated.get('max_charging_current',  m['/Link/ChargeCurrent']) # <- Maximum charge current. Must be written every 60 seconds. Used by GX device if there is a BMS or user limit.
             m['/Link/ChargeVoltage'] =  rated.get('battery_bulk_voltage',  m['/Link/ChargeVoltage']) # <- Charge voltage. Must be written every 60 seconds. Used by GX device to communicate BMS charge voltages.
-            m['/DC/0/Temperature'] = data.get('mppt1_charger_temperature', m['/DC/0/Temperature'])
-            m['/Dc/0/Voltage'] = data.get('battery_voltage', m['/Dc/0/Voltage'])
-            m['/Dc/0/Current'] = data.get('battery_charging_current', m['/Dc/0/Current'])
+            m['/DC/0/Temperature'] = data.get('mppt1_charger_temperature', {}).get("value", m['/DC/0/Temperature'])
+            m['/Dc/0/Voltage'] = data.get('battery_voltage', {}).get("value", m['/Dc/0/Voltage'])
+            m['/Dc/0/Current'] = data.get('battery_charging_current', {}).get("value", m['/Dc/0/Current'])
 
             # History
             # if generatedToday.get("generated_energy_for_day") != 0 and generatedToday.get("generated_energy_for_day") != None:
@@ -437,16 +437,16 @@ class DbusMppSolarService(object):
             #     minBatteryVoltage = 0
             #     maxBatteryCurrent = 0
 
-            if data.get('pv1_input_voltage') != None and data.get('pv1_input_voltage') > m["/History/Overall/MaxPvVoltage"]:
-                m["/History/Overall/MaxPvVoltage"] = data.get('pv1_input_voltage')
-            if data.get('pv1_input_power') != None and data.get('pv1_input_power') > m["/History/Overall/MaxPower"]:
-                m["/History/Overall/MaxPower"] = data.get('pv1_input_power')
-            if data.get('battery_voltage') != None and data.get('battery_voltage') > m["/History/Overall/MaxBatteryVoltage"]:
+            if data.get('pv1_input_voltage', {}).get("value") != None and data.get('pv1_input_voltage', {}).get("value") > m["/History/Overall/MaxPvVoltage"]:
+                m["/History/Overall/MaxPvVoltage"] = data.get('pv1_input_voltage', {}).get("value")
+            if data.get('pv1_input_power', {}).get("value") != None and data.get('pv1_input_power', {}).get("value") > m["/History/Overall/MaxPower"]:
+                m["/History/Overall/MaxPower"] = data.get('pv1_input_power', {}).get("value")
+            if data.get('battery_voltage', {}).get("value") != None and data.get('battery_voltage', {}).get("value") > m["/History/Overall/MaxBatteryVoltage"]:
                 m["/History/Overall/MaxBatteryVoltage"] = data.get('battery_voltage')
-            if data.get('battery_voltage') != None and data.get('battery_voltage') < m["/History/Overall/MinBatteryVoltage"]:
-                m["/History/Overall/MinBatteryVoltage"] = data.get('battery_voltage')
-            if data.get('battery_charging_current') != None and data.get('battery_charging_current') > m["/History/Overall/MaxBatteryCurrent"]:
-                m["/History/Overall/MaxBatteryCurrent"] = data.get('battery_charging_current')
+            if data.get('battery_voltage', {}).get("value") != None and data.get('battery_voltage', {}).get("value") < m["/History/Overall/MinBatteryVoltage"]:
+                m["/History/Overall/MinBatteryVoltage"] = data.get('battery_voltage', {}).get("value")
+            if data.get('battery_charging_current', {}).get("value") != None and data.get('battery_charging_current', {}).get("value") > m["/History/Overall/MaxBatteryCurrent"]:
+                m["/History/Overall/MaxBatteryCurrent"] = data.get('battery_charging_current', {}).get("value")
 
         # Execute updates of previously updated values
         self._updateInternal()
