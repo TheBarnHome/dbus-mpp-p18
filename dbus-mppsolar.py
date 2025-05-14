@@ -367,7 +367,7 @@ class DbusMppSolarService(object):
             logging.warning("bulkVoltage and/or floatVoltage not defined.")
         try:
             setMaxChargingCurrent(0, systemMaxChargeCurrent.get_value())
-            setMaxUtilityChargingCurrent(0 systemMaxChargeCurrent.get_value())
+            setMaxUtilityChargingCurrent(0, systemMaxChargeCurrent.get_value())
         except:
             logging.warning("Max charge current not defined.", exc_info=True)
         
