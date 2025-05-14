@@ -21,7 +21,7 @@ if [ ! -d "$SERVICE_PATH" ]; then
   echo "[$TIMESTAMP] 📝 Génération du script de lancement" >> "$LOGFILE"
   cat > "$SERVICE_PATH/run" <<EOF
 #!/bin/sh
-exec /usr/bin/env python3 ${SCRIPT_PATH} --device /dev/${DEVICE_NAME}
+exec /usr/bin/env python3 ${SCRIPT_PATH} --serial /dev/${DEVICE_NAME}
 EOF
   chmod +x "$SERVICE_PATH/run"
   echo "[$TIMESTAMP] ✅ Script de lancement créé et rendu exécutable." >> "$LOGFILE"
