@@ -452,7 +452,7 @@ class DbusMppSolarService(object):
             if data.get('data').get('pv1_input_power', {}).get("value") != None and data.get('data').get('pv1_input_power', {}).get("value") > m["/History/Overall/MaxPower"]:
                 m["/History/Overall/MaxPower"] = data.get('data').get('pv1_input_power', {}).get("value")
             if data.get('data').get('battery_voltage', {}).get("value") != None and data.get('data').get('battery_voltage', {}).get("value") > m["/History/Overall/MaxBatteryVoltage"]:
-                m["/History/Overall/MaxBatteryVoltage"] = data.get('data').get('battery_voltage')
+                m["/History/Overall/MaxBatteryVoltage"] = data.get('data').get('battery_voltage', {}).get("value")
             if data.get('data').get('battery_voltage', {}).get("value") != None and data.get('data').get('battery_voltage', {}).get("value") < m["/History/Overall/MinBatteryVoltage"]:
                 m["/History/Overall/MinBatteryVoltage"] = data.get('data').get('battery_voltage', {}).get("value")
             if data.get('data').get('battery_charging_current', {}).get("value") != None and data.get('data').get('battery_charging_current', {}).get("value") > m["/History/Overall/MaxBatteryCurrent"]:
