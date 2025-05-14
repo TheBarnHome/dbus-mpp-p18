@@ -7,6 +7,8 @@ BACKUP_FILE="${CONF_FILE}.bak.$(date +%F_%T)"
 INSTALL_DIR="/data/etc/dbus-mppsolar"
 SERVICE_TEMPLATE_SRC="$INSTALL_DIR/service"
 SERVICE_TEMPLATE_DST="/opt/victronenergy/service-templates/dbus-mppsolar"
+UDEV_RULES_PATH="/etc/udev/rules.d/99-mppsolar.rules"
+START_SCRIPT="/data/etc/dbus_mppsolar/start_mppsolar.sh"
 
 echo "🔧 Backing up $CONF_FILE to $BACKUP_FILE"
 cp "$CONF_FILE" "$BACKUP_FILE"
@@ -54,5 +56,28 @@ opkg install python3-pip git
 # 7. Install inverterd
 echo "🐍 Installing 'inverterd' via pip3"
 pip3 install inverterd
+
+echo "🛠️ Installation de la règle udev..."
+
+# Créer la règle udev
+cat <<EOF | sudo tee "$UDEV_RULES_PATH" > /dev/null
+ACTION=="add", KERNEL=="hidraw[0-9]*", ATTRS{idVendor}=="0665", ATTRS{idProduct}=="5161", RUN+="${START_SCRIPT} %E{DEVNAME}"
+EOF
+
+echo "✅ Règle udev créée à $UDEV_RULES_PATH"
+
+# Donner les droits d'exécution au script
+if [ -f "$START_SCRIPT" ]; then
+    chmod +x "$START_SCRIPT"
+    echo "✅ Droits d'exécution ajoutés à $START_SCRIPT"
+else
+    echo "❌ Le fichier $START_SCRIPT est introuvable !"
+    exit 1
+fi
+
+# Recharger udev
+echo "🔁 Rechargement des règles udev..."
+udevadm control --reload
+udevadm trigger
 
 echo "✅ All steps completed successfully."
