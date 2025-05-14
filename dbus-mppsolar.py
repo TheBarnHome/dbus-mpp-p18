@@ -45,7 +45,7 @@ numberOfChargers = 1
 def start_inverterd(usb_path: str, port: int):
     global process
     process = subprocess.Popen(
-        ['inverterd', '--usb-path', usb_path, '--port', str(8305 + port)],
+        ['./inverterd', '--usb-path', usb_path, '--port', str(8305 + port)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE
     )
