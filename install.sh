@@ -69,6 +69,8 @@ echo "✅ Règle udev créée à $UDEV_RULES_PATH"
 # Donner les droits d'exécution au script
 if [ -f "$START_SCRIPT" ]; then
     chmod +x "$START_SCRIPT"
+    chmod +x "$INSTALL_DIR/dbus-mppsolar.py"
+    chmod +x "$INSTALL_DIR/inverterd"
     echo "✅ Droits d'exécution ajoutés à $START_SCRIPT"
 else
     echo "❌ Le fichier $START_SCRIPT est introuvable !"
