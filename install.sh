@@ -60,7 +60,7 @@ pip3 install inverterd
 echo "🛠️ Installation de la règle udev..."
 
 # Créer la règle udev
-cat <<EOF | sudo tee "$UDEV_RULES_PATH" > /dev/null
+cat <<EOF | tee "$UDEV_RULES_PATH" > /dev/null
 ACTION=="add", KERNEL=="hidraw[0-9]*", ATTRS{idVendor}=="0665", ATTRS{idProduct}=="5161", RUN+="${START_SCRIPT} %E{DEVNAME}"
 EOF
 
