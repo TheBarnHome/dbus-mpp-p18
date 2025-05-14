@@ -17,11 +17,10 @@ RUN apt-get update && apt-get install -y \
 # Clonage du dépôt
 RUN git clone https://github.com/gch1p/inverter-tools.git /opt/inverter-tools
 
-# Modifier le CMakeLists.txt pour utiliser les libs statiques
-COPY CMakeLists.txt /opt/inverterd
-
 # Compilation
 WORKDIR /opt/inverter-tools
+# Modifier le CMakeLists.txt pour utiliser les libs statiques
+COPY CMakeLists.txt .
 RUN git submodule update --init
 RUN mkdir build
 WORKDIR /opt/inverter-tools/build

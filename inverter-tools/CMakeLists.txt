@@ -13,21 +13,14 @@ endif(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
 
 include(GNUInstallDirs)
 
-
-# find hidapi
-#if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
-#    find_library(HIDAPI_LIBRARY hidapi-hidraw)
-#endif()
-#if(${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
-#    find_library(HIDAPI_LIBRARY hidapi)
-#endif()
 find_path(HIDAPI_INCLUDE_DIR hidapi/hidapi.h)
 
 
 # find libserialport
-#find_library(LIBSERIALPORT_LIBRARY serialport)
 find_path(LIBSERIALPORT_INCLUDE_DIR libserialport.h)
 
+set(HIDAPI_LIBRARY /usr/lib/arm-linux-gnueabihf/libhidapi-hidraw.a)
+set(LIBSERIALPORT_LIBRARY /usr/lib/arm-linux-gnueabihf/libserialport.a)
 
 add_executable(inverterctl
         src/inverterctl.cc
@@ -46,9 +39,7 @@ add_executable(inverterctl
         src/voltronic/serial_device.cc
         src/voltronic/pseudo_device.cc)
 target_include_directories(inverterctl PRIVATE .)
-set(HIDAPI_LIBRARY /usr/lib/arm-linux-gnueabihf/libhidapi-hidraw.a)
-set(LIBSERIALPORT_LIBRARY /usr/lib/arm-linux-gnueabihf/libserialport.a)
-target_link_libraries(inverterctl m ${HIDAPI_LIBRARY} ${LIBSERIALPORT_LIBRARY} udev pthread)
+target_link_libraries(inverterctl m ${HIDAPI_LIBRARY} ${LIBSERIALPORT_LIBRARY} udev)
 target_compile_definitions(inverterctl PUBLIC INVERTERCTL)
 target_include_directories(inverterctl PRIVATE
         ${HIDAPI_INCLUDE_DIR}
@@ -80,10 +71,7 @@ add_executable(inverterd
         src/voltronic/pseudo_device.cc)
 target_include_directories(inverterd PRIVATE .)
 target_compile_definitions(inverterd PUBLIC INVERTERD)
-target_link_libraries(inverterd
-        m pthread
-        ${HIDAPI_LIBRARY}
-        ${LIBSERIALPORT_LIBRARY} udev)
+target_link_libraries(inverterd m ${HIDAPI_LIBRARY} ${LIBSERIALPORT_LIBRARY} pthread udev)
 target_include_directories(inverterd PRIVATE
         ${HIDAPI_INCLUDE_DIR}
         ${LIBSERIALPORT_INCLUDE_DIR}
