@@ -38,15 +38,6 @@ else
     exit 1
 fi
 
-# 4. Copy necessary files to /data/etc/dbus-mppsolar
-echo "📄 Copying required files to $INSTALL_DIR"
-mkdir -p "$INSTALL_DIR"
-cp config.json "$INSTALL_DIR/"
-cp dbus-mppsolar.py "$INSTALL_DIR/"
-cp serial-starter.sh "$INSTALL_DIR/"
-cp start-dbus-mppsolar.sh "$INSTALL_DIR/"
-cp velib_python "$INSTALL_DIR/"
-
 # 5. Switch to 'release' feed
 if [ -x /opt/victronenergy/swupdate-scripts/set-feed.sh ]; then
     echo "🔄 Switching software feed to 'release'"
