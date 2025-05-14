@@ -193,7 +193,7 @@ class DbusMppSolarService(object):
         logging.warning(f"Connected to inverter on {tty}, setting up dbus with /DeviceInstance = {deviceinstance}")
         
         # Create the services
-        hidraw = tty.split('/dev/')
+        hidraw = tty.strip('/dev/')
         self._dbusinverter = VeDbusService(f'com.victronenergy.inverter.mppsolar-inverter.{hidraw}', dbusconnection())
         self._dbusmppt = VeDbusService(f'com.victronenergy.solarcharger.mppsolar-charger.{hidraw}', dbusconnection())
 
