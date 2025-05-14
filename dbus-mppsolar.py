@@ -160,7 +160,7 @@ def dbusconnection():
 class DbusMppSolarService(object):
     def __init__(self, tty, deviceinstance, productname='MPPSolar', connection='MPPSolar interface', json_file_path='/data/etc/dbus-mppsolar/config.json'):
         global numberOfChargers
-        self._tty = tty.strip("/dev/")
+        self._tty = tty
         self._queued_updates = []
         
         # For production history
@@ -185,7 +185,7 @@ class DbusMppSolarService(object):
                     logging.warning("Product named from config : {}".format(productname_value))
                 numberOfChargers = config[self._tty].get('numberOfChargers', 1)
 
-                start_inverterd(tty, deviceinstance)
+                start_inverterd(self._tty, deviceinstance)
 
         if not os.path.exists("{}".format(tty)):
             logging.warning("Inverter not connected on {}".format(tty))
