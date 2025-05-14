@@ -12,4 +12,4 @@
 app=/data/etc/dbus-mppsolar/dbus-mppsolar.py
 
 # Baudrates to use
-start -s /dev/$hid
+start -s /dev/$1
