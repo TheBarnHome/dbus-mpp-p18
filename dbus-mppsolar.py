@@ -378,7 +378,7 @@ class DbusMppSolarService(object):
             rated = runInverterCommands('get-rated')
             alerts = runInverterCommands('get-errors')
 
-            logging.warning(mode)
+            logging.warning(rated)
         except:
             logging.warning("Error in update PI18 loop.", exc_info=True)
             self._updateInternal()
@@ -386,7 +386,7 @@ class DbusMppSolarService(object):
 
         with self._dbusinverter as i, self._dbusmppt as m:
             # 0=Off;1=Low Power;2=Fault;9=Inverting
-            invMode = mode.get('working_mode', i['/State'])
+            invMode = mode.get('mode', i['/State'])
             if invMode == 'Battery mode':
                 i['/State'] = 9 # Inverting
             elif invMode == 'Fault mode':
@@ -418,8 +418,8 @@ class DbusMppSolarService(object):
                 m['/Yield/User'] = generated.get('total_pv_generated_energy') / 1000
                 m['/Yield/System'] = generated.get('total_pv_generated_energy') / 1000
             m['/MppOperationMode'] = 2 if (data.get('pv1_input_power', {}).get("value", 0) > 0) else 0
-            m['/Link/ChargeCurrent'] =  rated.get('max_charging_current',  m['/Link/ChargeCurrent']) # <- Maximum charge current. Must be written every 60 seconds. Used by GX device if there is a BMS or user limit.
-            m['/Link/ChargeVoltage'] =  rated.get('battery_bulk_voltage',  m['/Link/ChargeVoltage']) # <- Charge voltage. Must be written every 60 seconds. Used by GX device to communicate BMS charge voltages.
+            m['/Link/ChargeCurrent'] =  rated.get('max_charging_current', {}).get("value",  m['/Link/ChargeCurrent']) # <- Maximum charge current. Must be written every 60 seconds. Used by GX device if there is a BMS or user limit.
+            m['/Link/ChargeVoltage'] =  rated.get('battery_bulk_voltage', {}).get("value",  m['/Link/ChargeVoltage']) # <- Charge voltage. Must be written every 60 seconds. Used by GX device to communicate BMS charge voltages.
             m['/DC/0/Temperature'] = data.get('mppt1_charger_temperature', {}).get("value", m['/DC/0/Temperature'])
             m['/Dc/0/Voltage'] = data.get('battery_voltage', {}).get("value", m['/Dc/0/Voltage'])
             m['/Dc/0/Current'] = data.get('battery_charging_current', {}).get("value", m['/Dc/0/Current'])
