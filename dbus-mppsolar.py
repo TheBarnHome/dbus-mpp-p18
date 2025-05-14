@@ -359,8 +359,8 @@ class DbusMppSolarService(object):
 
         battery_service = find_battery_service()
         if battery_service:
-            systemMaxChargeVoltage = VeDbusItemImport(dbusconnection(), battery_service, 'Info/MaxChargeVoltage')
-            systemMaxChargeCurrent = VeDbusItemImport(dbusconnection(), battery_service, 'Info/MaxChargeCurrent')
+            systemMaxChargeVoltage = VeDbusItemImport(dbusconnection(), battery_service, '/Info/MaxChargeVoltage')
+            systemMaxChargeCurrent = VeDbusItemImport(dbusconnection(), battery_service, '/Info/MaxChargeCurrent')
         try:
             setMaxChargingVoltage(systemMaxChargeVoltage.get_value(), systemMaxChargeVoltage.get_value())
         except:
