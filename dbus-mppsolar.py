@@ -191,7 +191,7 @@ class DbusMppSolarService(object):
             logging.warning("Inverter not connected on {}".format(tty))
             sys.exit()
 
-        logging.warning(f"Connected to inverter on {tty} ({self._invProtocol}), setting up dbus with /DeviceInstance = {deviceinstance}")
+        logging.warning(f"Connected to inverter on {tty}, setting up dbus with /DeviceInstance = {deviceinstance}")
         
         # Create the services
         self._dbusinverter = VeDbusService(f'com.victronenergy.inverter.mppsolar-inverter.{self._tty}', dbusconnection())
