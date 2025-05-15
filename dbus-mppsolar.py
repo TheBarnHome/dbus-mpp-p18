@@ -422,9 +422,9 @@ class DbusMppSolarService(object):
             m['/Pv/V'] = data.get('data').get('pv1_input_voltage', {}).get("value", m['/Pv/V'])
             m['/Pv/0/P'] = data.get('data').get('pv1_input_power', {}).get("value", m['/Pv/0/P'])
             m['/Yield/Power'] = data.get('data').get('pv1_input_power', {}).get("value", m['/Yield/Power'])
-            if generated.get('data').get('total_pv_generated_energy') != 0 and generated.get('data').get('total_pv_generated_energy') != None:
-                m['/Yield/User'] = generated.get('data').get('total_pv_generated_energy') / 1000
-                m['/Yield/System'] = generated.get('data').get('total_pv_generated_energy') / 1000
+            if generated.get('data').get('wh') != 0 and generated.get('data').get('wh') != None:
+                m['/Yield/User'] = generated.get('data').get('wh') / 1000
+                m['/Yield/System'] = generated.get('data').get('wh') / 1000
             m['/MppOperationMode'] = 2 if (data.get('data').get('pv1_input_power', {}).get("value", 0) > 0) else 0
             m['/Link/ChargeCurrent'] =  rated.get('data').get('max_charging_current', {}).get("value",  m['/Link/ChargeCurrent']) # <- Maximum charge current. Must be written every 60 seconds. Used by GX device if there is a BMS or user limit.
             m['/Link/ChargeVoltage'] =  rated.get('data').get('battery_bulk_voltage', {}).get("value",  m['/Link/ChargeVoltage']) # <- Charge voltage. Must be written every 60 seconds. Used by GX device to communicate BMS charge voltages.
