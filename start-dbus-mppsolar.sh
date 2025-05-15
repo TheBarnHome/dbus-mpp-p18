@@ -1,17 +1,16 @@
 #!/bin/bash
-#
-# Start script for gps_dbus
-#   First parameter: hidraw device to use
-#
-# Keep this script running with daemon tools. If it exits because the
-# connection crashes, or whatever, daemon tools will start a new one.
-#
 
-. /opt/victronenergy/serial-starter/run-service.sh
+DEVICE=$1
+SERIAL_DEV="/dev/$DEVICE"
+APP=/data/etc/dbus-mppsolar/dbus-mppsolar.py
+LOGDIR=/var/log/dbus-mppsolar.$DEVICE
+PIDFILE="/var/run/dbus-mppsolar.$DEVICE.pid"
 
-app=/data/etc/dbus-mppsolar/dbus-mppsolar.py
-logdir=/var/log/dbus-mppsolar.$1
+echo "UTC-$(date -u +%Y.%m.%d-%H:%M:%S) Starting dbus-mppsolar.py on $DEVICE"
 
-# Baudrates to use
-start -s /dev/$1 -- sh -c "exec python3 $app /dev/$1 2>&1 | multilog t s25000 n4 $logdir"
+mkdir -p "$LOGDIR"
 
+exec start-stop-daemon --start \
+  --make-pidfile --pidfile "$PIDFILE" \
+  --exec /bin/sh -- -c \
+  "exec python3 $APP --serial $SERIAL_DEV 2>&1 | multilog t s25000 n4 $LOGDIR"
