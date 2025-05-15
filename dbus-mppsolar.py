@@ -430,7 +430,7 @@ class DbusMppSolarService(object):
             m['/Link/ChargeVoltage'] =  rated.get('data').get('battery_bulk_voltage', {}).get("value",  m['/Link/ChargeVoltage']) # <- Charge voltage. Must be written every 60 seconds. Used by GX device to communicate BMS charge voltages.
             m['/DC/0/Temperature'] = data.get('data').get('mppt1_charger_temperature', {}).get("value", m['/DC/0/Temperature'])
             m['/Dc/0/Voltage'] = data.get('data').get('battery_voltage', {}).get("value", m['/Dc/0/Voltage'])
-            m['/Dc/0/Current'] = data.get('data').get('battery_charging_current', {}).get("value", m['/Dc/0/Current'])
+            m['/Dc/0/Current'] = data.get('data').get('battery_charge_current', {}).get("value", m['/Dc/0/Current'])
 
             # Error code handling
             if alerts.get('data').get('fault_code') != 0:
@@ -463,8 +463,8 @@ class DbusMppSolarService(object):
                 m["/History/Overall/MaxBatteryVoltage"] = data.get('data').get('battery_voltage', {}).get("value")
             if data.get('data').get('battery_voltage', {}).get("value") != None and data.get('data').get('battery_voltage', {}).get("value") < m["/History/Overall/MinBatteryVoltage"]:
                 m["/History/Overall/MinBatteryVoltage"] = data.get('data').get('battery_voltage', {}).get("value")
-            if data.get('data').get('battery_charging_current', {}).get("value") != None and data.get('data').get('battery_charging_current', {}).get("value") > m["/History/Overall/MaxBatteryCurrent"]:
-                m["/History/Overall/MaxBatteryCurrent"] = data.get('data').get('battery_charging_current', {}).get("value")
+            if data.get('data').get('battery_charge_current', {}).get("value") != None and data.get('data').get('battery_charge_current', {}).get("value") > m["/History/Overall/MaxBatteryCurrent"]:
+                m["/History/Overall/MaxBatteryCurrent"] = data.get('data').get('battery_charge_current', {}).get("value")
 
         # Execute updates of previously updated values
         self._updateInternal()
