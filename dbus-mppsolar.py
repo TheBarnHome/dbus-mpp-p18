@@ -369,10 +369,10 @@ class DbusMppSolarService(object):
         if battery_service:
             systemMaxChargeVoltage = VeDbusItemImport(dbusconnection(), battery_service, '/Info/MaxChargeVoltage')
             systemMaxChargeCurrent = VeDbusItemImport(dbusconnection(), battery_service, '/Info/MaxChargeCurrent')
-        try:
-            setMaxChargingVoltage(systemMaxChargeVoltage.get_value(), systemMaxChargeVoltage.get_value())
-        except:
-            logging.warning("bulkVoltage and/or floatVoltage not defined.")
+            try:
+                setMaxChargingVoltage(systemMaxChargeVoltage.get_value(), systemMaxChargeVoltage.get_value())
+            except:
+                logging.warning("bulkVoltage and/or floatVoltage not defined.")
         # try:
         #     setMaxChargingCurrent(0, systemMaxChargeCurrent.get_value())
         #     setMaxUtilityChargingCurrent(0, systemMaxChargeCurrent.get_value())
