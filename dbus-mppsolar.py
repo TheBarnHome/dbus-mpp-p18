@@ -394,7 +394,7 @@ class DbusMppSolarService(object):
 
         with self._dbusinverter as i, self._dbusmppt as m:
             # 0=Off;1=Low Power;2=Fault;9=Inverting
-            invMode = mode.get('mode', i['/State'])
+            invMode = mode.get('data', {}).get('mode', i['/State'])
             if invMode == 'Battery mode':
                 i['/State'] = 9 # Inverting
             elif invMode == 'Fault mode':
@@ -410,8 +410,8 @@ class DbusMppSolarService(object):
             if i['/Ac/Out/L1/V'] != 0 and i['/Ac/Out/L1/P'] != 0:
                 output_current = i['/Ac/Out/L1/P'] / i['/Ac/Out/L1/V']
                 i['/Ac/Out/L1/I'] = output_current
-            i['/Ac/Out/L1/F'] = data.get('data').get('ac_output_frequency', {}).get("value", i['/Ac/Out/L1/F'])
-            i['/Temperature'] = data.get('data').get('inverter_heat_sink_temperature', {}).get("value", i['/Temperature'])
+            i['/Ac/Out/L1/F'] = data.get('data').get('ac_output_freq', {}).get("value", i['/Ac/Out/L1/F'])
+            i['/Temperature'] = data.get('data').get('inverter_heat_sink_temp', {}).get("value", i['/Temperature'])
 
             # Solar charger
             if data.get('data').get('pv1_input_power', {}).get("value", 0) > 0:
