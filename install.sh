@@ -8,7 +8,7 @@ INSTALL_DIR="/data/etc/dbus-mppsolar"
 SERVICE_TEMPLATE_SRC="$INSTALL_DIR/service"
 SERVICE_TEMPLATE_DST="/opt/victronenergy/service-templates/dbus-mppsolar"
 UDEV_RULES_PATH="/etc/udev/rules.d/99-mppsolar.rules"
-START_SCRIPT="/data/etc/dbus-mppsolar/start_mppsolar.sh"
+START_SCRIPT="/data/etc/dbus-mppsolar/start-dbus-mppsolar.sh"
 
 echo "🔧 Backing up $CONF_FILE to $BACKUP_FILE"
 cp "$CONF_FILE" "$BACKUP_FILE"
@@ -61,7 +61,7 @@ echo "🛠️ Installation de la règle udev..."
 
 # Créer la règle udev
 cat <<EOF | tee "$UDEV_RULES_PATH" > /dev/null
-ACTION=="add", KERNEL=="hidraw[0-9]*", ATTRS{idVendor}=="0665", ATTRS{idProduct}=="5161", RUN+="${START_SCRIPT} %E{DEVNAME}"
+ACTION=="change", SUBSYSTEM=="hidraw", KERNEL=="hidraw*", RUN+="$START_SCRIPT %k"
 EOF
 
 echo "✅ Règle udev créée à $UDEV_RULES_PATH"
