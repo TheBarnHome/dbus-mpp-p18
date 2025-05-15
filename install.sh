@@ -8,6 +8,28 @@ START_SCRIPT="$INSTALL_DIR/start-dbus-mppsolar.sh"
 INIT_SCRIPT_PATH="/etc/init.d"
 RCS_LINK="/etc/rcS.d/S99scan-hidraw"
 
+echo "🛑 Stopping existing dbus-mppsolar and inverterd processes..."
+
+# Generic kill function
+kill_processes() {
+    local pattern=$1
+    echo "🔍 Looking for processes matching: $pattern"
+    PIDS=$(ps | grep "$pattern" | grep -v grep | awk '{print $1}')
+    for PID in $PIDS; do
+        echo "⚙️ Killing process $PID ($pattern)"
+        kill "$PID" || echo "⚠️ Could not kill process $PID"
+    done
+}
+
+# Kill known processes
+kill_processes "dbus-mppsolar.py"
+kill_processes "inverterd --usb-path"
+kill_processes "multilog.*dbus-mppsolar"
+
+echo "✅ All matching processes have been stopped."
+
+# --- Begin installation ---
+
 if [ -x /opt/victronenergy/swupdate-scripts/set-feed.sh ]; then
     echo "🔄 Switching software feed to 'release'"
     /opt/victronenergy/swupdate-scripts/set-feed.sh release
