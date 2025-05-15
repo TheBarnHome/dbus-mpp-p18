@@ -30,22 +30,27 @@ sys.path.insert(1, os.path.join(os.path.dirname(__file__), 'velib_python'))
 from vedbus import VeDbusService, VeDbusItemExport, VeDbusItemImport
 
 process = None
+port = None
+host = '127.0.0.1'
+output_format=Format.JSON
 
 # For production history
-global energyProductionDays
-global currentDay
-global minBatteryVoltage
-global maxBatteryVoltage
-global maxBatteryCurrent
-global maxPVPower
-global maxPVVoltage
+energyProductionDays = None
+currentDay = None
+minBatteryVoltage = None
+maxBatteryVoltage = None
+maxBatteryCurrent = None
+maxPVPower = None
+maxPVVoltage = None
 
 numberOfChargers = 1
 
-def start_inverterd(usb_path: str, port: int):
+def start_inverterd(usb_path: str):
     global process
+    global port
+
     process = subprocess.Popen(
-        ['/data/etc/dbus-mppsolar/inverterd', '--usb-path', usb_path, '--port', str(8305 + port)],
+        ['/data/etc/dbus-mppsolar/inverterd', '--usb-path', usb_path, '--port', str(port)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE
     )
@@ -60,19 +65,19 @@ def stop_inverterd():
             process.kill()
 
 # Inverter commands to read from the serial
-def runInverterCommands(command: str, params: tuple = (), host: str = '127.0.0.1', port: int = 8305, output_format=Format.JSON):
+def runInverterCommands(command: str, params: tuple = ()):
     """
     Exécute une commande sur l'onduleur via la librairie inverterd.
 
     :param command: La commande à exécuter (ex: 'get-status', 'get-year-generated')
     :param params: Tuple de paramètres à passer à la commande (ex: (2021,), (2021, 2022))
-    :param host: Adresse IP de l'onduleur (par défaut '127.0.0.1')
-    :param port: Port du service inverterd (par défaut 8305)
-    :param output_format: Format de sortie (par défaut Format.JSON)
     :return: Le résultat de la commande
     """
     global args
     global mainloop
+    global port
+    global host
+    global output_format
 
     c = Client(port, host)
     c.connect()
@@ -160,6 +165,8 @@ def dbusconnection():
 class DbusMppSolarService(object):
     def __init__(self, tty, deviceinstance, productname='MPPSolar', connection='MPPSolar interface', json_file_path='/data/etc/dbus-mppsolar/config.json'):
         global numberOfChargers
+        global port
+
         self._queued_updates = []
         
         # For production history
@@ -184,7 +191,8 @@ class DbusMppSolarService(object):
                     logging.warning("Product named from config : {}".format(productname_value))
                 numberOfChargers = config[tty].get('numberOfChargers', 1)
 
-                start_inverterd(tty, deviceinstance)
+                port = 8305 + deviceinstance
+                start_inverterd(tty)
 
         if not os.path.exists("{}".format(tty)):
             logging.warning("Inverter not connected on {}".format(tty))
@@ -365,11 +373,11 @@ class DbusMppSolarService(object):
             setMaxChargingVoltage(systemMaxChargeVoltage.get_value(), systemMaxChargeVoltage.get_value())
         except:
             logging.warning("bulkVoltage and/or floatVoltage not defined.")
-        try:
-            setMaxChargingCurrent(0, systemMaxChargeCurrent.get_value())
-            setMaxUtilityChargingCurrent(0, systemMaxChargeCurrent.get_value())
-        except:
-            logging.warning("Max charge current not defined.", exc_info=True)
+        # try:
+        #     setMaxChargingCurrent(0, systemMaxChargeCurrent.get_value())
+        #     setMaxUtilityChargingCurrent(0, systemMaxChargeCurrent.get_value())
+        # except:
+        #     logging.warning("Max charge current not defined.", exc_info=True)
         
         try:
             generated = runInverterCommands('get-total-generated')
