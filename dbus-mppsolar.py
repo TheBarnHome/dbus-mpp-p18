@@ -503,7 +503,7 @@ def main():
 
     from dbus.mainloop.glib import DBusGMainLoop
     # Have a mainloop, so we can send/receive asynchronous calls to and from dbus
-    DBusGMainLoop(set_as_default=True)
+    DBusGMainLoop(set_as_default=True, register=True)
 
     mppservice = DbusMppSolarService(tty=args.serial, deviceinstance=0)
     logging.warning('Created service & connected to dbus, switching over to GLib.MainLoop() (= event based)')
