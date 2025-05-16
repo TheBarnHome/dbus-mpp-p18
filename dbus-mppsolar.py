@@ -32,7 +32,7 @@ from vedbus import VeDbusService, VeDbusItemExport, VeDbusItemImport
 process = None
 port = None
 host = '127.0.0.1'
-usb_path = None
+usb_path = ''
 output_format=Format.JSON
 
 # For production history
