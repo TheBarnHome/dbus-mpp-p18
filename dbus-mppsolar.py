@@ -345,7 +345,7 @@ class DbusMppSolarService(object):
 
     def _update(self):
         global mainloop
-        logging.info("{} updating".format(datetime.datetime.now().time()))
+        logging.warning("{} updating".format(datetime.datetime.now().time()))
         try: 
             return self._update_PI18()
         except:
