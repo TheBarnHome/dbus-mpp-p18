@@ -51,6 +51,8 @@ def start_inverterd():
     global port
     global usb_path
 
+    logging.warning("Starting inverterd for usb path {}".format(usb_path))
+
     process = subprocess.Popen(
         ['/data/etc/dbus-mppsolar/inverterd', '--usb-path', usb_path, '--port', str(port), '--delay 1000', '--device-error-limit 100'],
         stdout=subprocess.PIPE,
