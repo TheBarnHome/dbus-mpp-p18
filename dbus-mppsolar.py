@@ -32,7 +32,6 @@ from vedbus import VeDbusService, VeDbusItemExport, VeDbusItemImport
 process = None
 port = None
 host = '127.0.0.1'
-usb_path = ''
 output_format=Format.JSON
 
 # For production history
@@ -46,12 +45,9 @@ maxPVVoltage = None
 
 numberOfChargers = 1
 
-def start_inverterd():
+def start_inverterd(usb_path: str):
     global process
     global port
-    global usb_path
-
-    logging.warning("Starting inverterd for usb path {}".format(usb_path))
 
     process = subprocess.Popen(
         ['/data/etc/dbus-mppsolar/inverterd', '--usb-path', usb_path, '--port', str(port), '--delay 1000', '--device-error-limit 100'],
@@ -95,12 +91,6 @@ def runInverterCommands(command: str, params: tuple = ()):
 
     parsed = json.loads(output)
 
-    if 'error' in parsed.get('result'):
-        if 'device error' in parsed.get('message'):
-            logging.warning('Restart of inverterd for {}'.format(usb_path))
-            stop_inverterd()
-            start_inverterd()
-            logging.warning('Inverterd restarted for {}'.format(usb_path))
     return parsed
 
 def find_battery_service():
@@ -176,8 +166,7 @@ class DbusMppSolarService(object):
     def __init__(self, tty, deviceinstance, productname='MPPSolar', connection='MPPSolar interface', json_file_path='/data/etc/dbus-mppsolar/config.json'):
         global numberOfChargers
         global port
-        global usb_path
-        
+
         self._queued_updates = []
         
         # For production history
@@ -203,8 +192,7 @@ class DbusMppSolarService(object):
                 numberOfChargers = config[tty].get('numberOfChargers', 1)
 
                 port = 8305 + deviceinstance
-                usb_path = tty
-                start_inverterd()
+                start_inverterd(tty)
 
         if not os.path.exists("{}".format(tty)):
             logging.warning("Inverter not connected on {}".format(tty))
