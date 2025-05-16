@@ -50,7 +50,7 @@ def start_inverterd(usb_path: str):
     global port
 
     process = subprocess.Popen(
-        ['/data/etc/dbus-mppsolar/inverterd', '--usb-path', usb_path, '--port', str(port)],
+        ['/data/etc/dbus-mppsolar/inverterd', '--usb-path', usb_path, '--port', str(port), '--delay 1000'],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE
     )
