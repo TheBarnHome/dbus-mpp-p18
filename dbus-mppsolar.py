@@ -202,8 +202,8 @@ class DbusMppSolarService(object):
         
         # Create the services
         hidraw = tty.strip('/dev/')
-        self._dbusinverter = VeDbusService(f'com.victronenergy.inverter.mppsolar-inverter.{hidraw}', dbusconnection())
-        self._dbusmppt = VeDbusService(f'com.victronenergy.solarcharger.mppsolar-charger.{hidraw}', dbusconnection())
+        self._dbusinverter = VeDbusService(f'com.victronenergy.inverter.mppsolar-inverter.{hidraw}', bus=dbusconnection(), register=False)
+        self._dbusmppt = VeDbusService(f'com.victronenergy.solarcharger.mppsolar-charger.{hidraw}', bus=dbusconnection(), register=False)
 
         # Set up default paths
         self.setupInverterDefaultPaths(self._dbusinverter, connection, deviceinstance, f"Inverter {productname}")
@@ -288,6 +288,12 @@ class DbusMppSolarService(object):
         # self._dbusmppt.add_path('/History/Overall/MinBatteryVoltage', 0)
 
         logging.info(f"Paths for 'solarcharger' created.")
+
+        self._dbusinverter.register()
+        self._dbusmppt.register()
+
+        logging.info(f'Added to D-Bus: {self._dbusinverter}')
+        logging.info(f'Added to D-Bus: {self._dbusmppt}')
 
         GLib.timeout_add(self.updateInterval, self._update)
     
