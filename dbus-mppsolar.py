@@ -416,7 +416,18 @@ class DbusMppSolarService(object):
             alerts = runInverterCommands('get-errors')
 
         except:
-            logging.warning("Error in update PI18 loop.", exc_info=True)
+            results = {
+                "generated": generated,
+                "data": data,
+                "mode": mode,
+                "rated": rated,
+                "alerts": alerts
+            }
+
+            # Vérifier s'il y a des erreurs
+            for name, result in results.items():
+                if isinstance(result, dict) and result.get("result") == "error":
+                    logging.warning(f"Error in update PI18 loop. {name} → {result.get('message')}")
             self._updateInternal()
             return True
 
