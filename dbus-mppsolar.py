@@ -108,9 +108,9 @@ def runInverterCommands(command: str, params: tuple = (), timeout_sec: int = 10)
             try:
                 return future.result(timeout=timeout_sec)
             except concurrent.futures.TimeoutError:
-                print(f"[ERROR] inverterd ne répond pas à '{command}', redémarrage...")
+                logging.warning(f"[ERROR] inverterd is not responding to '{command}', restarting...")
                 stop_inverterd()
-                time.sleep(1)
+                time.sleep(3)
                 start_inverterd(usb_path)
                 time.sleep(3)  # Laisse un peu de temps au process pour redémarrer
 
