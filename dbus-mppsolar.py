@@ -210,7 +210,7 @@ class DbusMppSolarService(object):
                 self.updateInterval = config[tty].get('updateInterval', 10000)
                 if productname_value is not None:
                     productname = productname_value
-                    logging.warning("Product named from config : {}".format(productname_value))
+                    logging.info("Product named from config : {}".format(productname_value))
                 numberOfChargers = config[tty].get('numberOfChargers', 1)
 
                 port = 8305 + deviceinstance
@@ -221,7 +221,7 @@ class DbusMppSolarService(object):
             logging.warning("Inverter not connected on {}".format(tty))
             sys.exit()
 
-        logging.warning(f"Connected to inverter on {tty}, setting up dbus with /DeviceInstance = {deviceinstance}")
+        logging.info(f"Connected to inverter on {tty}, setting up dbus with /DeviceInstance = {deviceinstance}")
         
         # Create the services
         hidraw = tty.strip('/dev/')
@@ -379,7 +379,7 @@ class DbusMppSolarService(object):
 
     def _change(self, path, value):
         global mainloop
-        logging.warning("updated %s to %s" % (path, value))
+        logging.info("updated %s to %s" % (path, value))
         if path == '/Settings/Reset':
             logging.info("Restarting!")
             mainloop.quit()
@@ -501,26 +501,26 @@ class DbusMppSolarService(object):
     def _change_PI18(self, path, value):
         # Link
         if path == '/Link':
-            logging.warning("{} : {}".format(path, value))
+            logging.info("{} : {}".format(path, value))
 
         if path == '/Link/ChargeCurrent':
-            logging.warning("/Link/ChargeCurrent : {}".format(value))
+            logging.info("/Link/ChargeCurrent : {}".format(value))
 
         if path == '/Link/ChargeCurrent':
-            logging.warning("/Link/ChargeCurrent : {}".format(value))
+            logging.info("/Link/ChargeCurrent : {}".format(value))
 
         # Mode settings
         if path == '/Mode': # 1=Charger Only;2=Inverter Only;3=On;4=Off(?)
             if value == 1:
-                logging.warning("setting mode to 'Charger Only'(Charger=Util) ({})".format(setChargerPriority(1), setOutputSource(1)))
+                logging.info("setting mode to 'Charger Only'(Charger=Util) ({})".format(setChargerPriority(1), setOutputSource(1)))
             elif value == 2:
-                logging.warning("setting mode to 'Inverter Only'(Charger=Solar & Output=SBU) ({},{})".format(setChargerPriority(0), setOutputSource(2)))
+                logging.info("setting mode to 'Inverter Only'(Charger=Solar & Output=SBU) ({},{})".format(setChargerPriority(0), setOutputSource(2)))
             elif value == 3:
-                logging.warning("setting mode to 'ON=Charge+Invert'(Charger=Util & Output=SBU) ({},{})".format(setChargerPriority(1), setOutputSource(2)))
+                logging.info("setting mode to 'ON=Charge+Invert'(Charger=Util & Output=SBU) ({},{})".format(setChargerPriority(1), setOutputSource(2)))
             elif value == 4:
-                logging.warning("setting mode to 'OFF'(Charger=Solar) ({})".format(setChargerPriority(3), setOutputSource(2)))
+                logging.info("setting mode to 'OFF'(Charger=Solar) ({})".format(setChargerPriority(3), setOutputSource(2)))
             else:
-                logging.warning("setting mode not understood ({})".format(value))
+                logging.info("setting mode not understood ({})".format(value))
             self._queued_updates.append((path, value))        
         return True # accept the change
 
@@ -535,7 +535,7 @@ def main():
     DBusGMainLoop(set_as_default=True)
 
     mppservice = DbusMppSolarService(tty=args.serial, deviceinstance=0)
-    logging.warning('Created service & connected to dbus, switching over to GLib.MainLoop() (= event based)')
+    logging.info('Created service & connected to dbus, switching over to GLib.MainLoop() (= event based)')
 
     global mainloop
 
