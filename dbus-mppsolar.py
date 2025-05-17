@@ -32,6 +32,7 @@ from vedbus import VeDbusService, VeDbusItemExport, VeDbusItemImport
 process = None
 port = None
 host = '127.0.0.1'
+usb_path = 
 output_format=Format.JSON
 
 # For production history
@@ -65,7 +66,7 @@ def stop_inverterd():
             process.kill()
 
 # Inverter commands to read from the serial
-def runInverterCommands(command: str, params: tuple = ()):
+def safe_runInverterCommands(command: str, params: tuple = ()):
     """
     Exécute une commande sur l'onduleur via la librairie inverterd.
 
@@ -92,6 +93,25 @@ def runInverterCommands(command: str, params: tuple = ()):
     parsed = json.loads(output)
 
     return parsed
+
+def runInverterCommands(command: str, params: tuple = (), timeout_sec: int = 10):
+    """
+    Exécute la commande inverter avec surveillance du timeout.
+    Si inverterd ne répond pas, il est redémarré automatiquement.
+    """
+    global usb_path
+
+    while True:
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(safe_runInverterCommands, command, params)
+            try:
+                return future.result(timeout=timeout_sec)
+            except concurrent.futures.TimeoutError:
+                print(f"[ERROR] inverterd ne répond pas à '{command}', redémarrage...")
+                stop_inverterd()
+                time.sleep(1)
+                start_inverterd(usb_path)
+                time.sleep(3)  # Laisse un peu de temps au process pour redémarrer
 
 def find_battery_service():
     bus = dbus.SystemBus()
@@ -166,6 +186,7 @@ class DbusMppSolarService(object):
     def __init__(self, tty, deviceinstance, productname='MPPSolar', connection='MPPSolar interface', json_file_path='/data/etc/dbus-mppsolar/config.json'):
         global numberOfChargers
         global port
+        global usb_path
 
         self._queued_updates = []
         
@@ -192,9 +213,10 @@ class DbusMppSolarService(object):
                 numberOfChargers = config[tty].get('numberOfChargers', 1)
 
                 port = 8305 + deviceinstance
-                start_inverterd(tty)
+                usb_path = tty
+                start_inverterd(usb_path)
 
-        if not os.path.exists("{}".format(tty)):
+        if not os.path.exists("{}".format(usb_path)):
             logging.warning("Inverter not connected on {}".format(tty))
             sys.exit()
 
