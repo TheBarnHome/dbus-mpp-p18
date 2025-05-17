@@ -395,6 +395,8 @@ class DbusMppSolarService(object):
         # Update charge voltage
 
         battery_service = find_battery_service()
+        generated = data = mode = rated = alerts = {"result": "init", "message": "not initialized"}
+
         if battery_service:
             systemMaxChargeVoltage = VeDbusItemImport(dbusconnection(), battery_service, '/Info/MaxChargeVoltage')
             systemMaxChargeCurrent = VeDbusItemImport(dbusconnection(), battery_service, '/Info/MaxChargeCurrent')
