@@ -21,6 +21,7 @@ import dbus.service
 import subprocess
 import time
 import atexit
+import concurrent.futures
 from inverterd import Client, Format
 
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
@@ -32,6 +33,7 @@ from vedbus import VeDbusService, VeDbusItemExport, VeDbusItemImport
 process = None
 port = None
 host = '127.0.0.1'
+usb_path = ''
 output_format=Format.JSON
 
 # For production history
@@ -50,7 +52,7 @@ def start_inverterd(usb_path: str):
     global port
 
     process = subprocess.Popen(
-        ['/data/etc/dbus-mppsolar/inverterd', '--usb-path', usb_path, '--port', str(port)],
+        ['/data/etc/dbus-mppsolar/inverterd', '--usb-path', usb_path, '--port', str(port), '--delay 1000'],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE
     )
@@ -65,7 +67,7 @@ def stop_inverterd():
             process.kill()
 
 # Inverter commands to read from the serial
-def runInverterCommands(command: str, params: tuple = ()):
+def safe_runInverterCommands(command: str, params: tuple = ()):
     """
     Exécute une commande sur l'onduleur via la librairie inverterd.
 
@@ -92,6 +94,25 @@ def runInverterCommands(command: str, params: tuple = ()):
     parsed = json.loads(output)
 
     return parsed
+
+def runInverterCommands(command: str, params: tuple = (), timeout_sec: int = 10):
+    """
+    Exécute la commande inverter avec surveillance du timeout.
+    Si inverterd ne répond pas, il est redémarré automatiquement.
+    """
+    global usb_path
+
+    while True:
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(safe_runInverterCommands, command, params)
+            try:
+                return future.result(timeout=timeout_sec)
+            except concurrent.futures.TimeoutError:
+                logging.warning(f"[ERROR] inverterd is not responding to '{command}', restarting...")
+                stop_inverterd()
+                time.sleep(3)
+                start_inverterd(usb_path)
+                time.sleep(3)  # Laisse un peu de temps au process pour redémarrer
 
 def find_battery_service():
     bus = dbus.SystemBus()
@@ -166,6 +187,7 @@ class DbusMppSolarService(object):
     def __init__(self, tty, deviceinstance, productname='MPPSolar', connection='MPPSolar interface', json_file_path='/data/etc/dbus-mppsolar/config.json'):
         global numberOfChargers
         global port
+        global usb_path
 
         self._queued_updates = []
         
@@ -188,22 +210,23 @@ class DbusMppSolarService(object):
                 self.updateInterval = config[tty].get('updateInterval', 10000)
                 if productname_value is not None:
                     productname = productname_value
-                    logging.warning("Product named from config : {}".format(productname_value))
+                    logging.info("Product named from config : {}".format(productname_value))
                 numberOfChargers = config[tty].get('numberOfChargers', 1)
 
                 port = 8305 + deviceinstance
-                start_inverterd(tty)
+                usb_path = tty
+                start_inverterd(usb_path)
 
-        if not os.path.exists("{}".format(tty)):
+        if not os.path.exists("{}".format(usb_path)):
             logging.warning("Inverter not connected on {}".format(tty))
             sys.exit()
 
-        logging.warning(f"Connected to inverter on {tty}, setting up dbus with /DeviceInstance = {deviceinstance}")
+        logging.info(f"Connected to inverter on {tty}, setting up dbus with /DeviceInstance = {deviceinstance}")
         
         # Create the services
         hidraw = tty.strip('/dev/')
-        self._dbusinverter = VeDbusService(f'com.victronenergy.inverter.mppsolar-inverter.{hidraw}', dbusconnection())
-        self._dbusmppt = VeDbusService(f'com.victronenergy.solarcharger.mppsolar-charger.{hidraw}', dbusconnection())
+        self._dbusinverter = VeDbusService(f'com.victronenergy.inverter.mppsolar-inverter.{hidraw}', bus=dbusconnection(), register=False)
+        self._dbusmppt = VeDbusService(f'com.victronenergy.solarcharger.mppsolar-charger.{hidraw}', bus=dbusconnection(), register=False)
 
         # Set up default paths
         self.setupInverterDefaultPaths(self._dbusinverter, connection, deviceinstance, f"Inverter {productname}")
@@ -289,6 +312,12 @@ class DbusMppSolarService(object):
 
         logging.info(f"Paths for 'solarcharger' created.")
 
+        self._dbusinverter.register()
+        self._dbusmppt.register()
+
+        logging.info(f'Added to D-Bus: {self._dbusinverter}')
+        logging.info(f'Added to D-Bus: {self._dbusmppt}')
+
         GLib.timeout_add(self.updateInterval, self._update)
     
     def setupInverterDefaultPaths(self, service, connection, deviceinstance, productname):
@@ -350,7 +379,7 @@ class DbusMppSolarService(object):
 
     def _change(self, path, value):
         global mainloop
-        logging.warning("updated %s to %s" % (path, value))
+        logging.info("updated %s to %s" % (path, value))
         if path == '/Settings/Reset':
             logging.info("Restarting!")
             mainloop.quit()
@@ -366,6 +395,8 @@ class DbusMppSolarService(object):
         # Update charge voltage
 
         battery_service = find_battery_service()
+        generated = data = mode = rated = alerts = {"result": "init", "message": "not initialized"}
+
         if battery_service:
             systemMaxChargeVoltage = VeDbusItemImport(dbusconnection(), battery_service, '/Info/MaxChargeVoltage')
             systemMaxChargeCurrent = VeDbusItemImport(dbusconnection(), battery_service, '/Info/MaxChargeCurrent')
@@ -387,7 +418,18 @@ class DbusMppSolarService(object):
             alerts = runInverterCommands('get-errors')
 
         except:
-            logging.warning("Error in update PI18 loop.", exc_info=True)
+            results = {
+                "generated": generated,
+                "data": data,
+                "mode": mode,
+                "rated": rated,
+                "alerts": alerts
+            }
+
+            # Vérifier s'il y a des erreurs
+            for name, result in results.items():
+                if isinstance(result, dict) and result.get("result") == "error":
+                    logging.warning(f"Error in update PI18 loop. {name} → {result.get('message')}")
             self._updateInternal()
             return True
 
@@ -472,26 +514,26 @@ class DbusMppSolarService(object):
     def _change_PI18(self, path, value):
         # Link
         if path == '/Link':
-            logging.warning("{} : {}".format(path, value))
+            logging.info("{} : {}".format(path, value))
 
         if path == '/Link/ChargeCurrent':
-            logging.warning("/Link/ChargeCurrent : {}".format(value))
+            logging.info("/Link/ChargeCurrent : {}".format(value))
 
         if path == '/Link/ChargeCurrent':
-            logging.warning("/Link/ChargeCurrent : {}".format(value))
+            logging.info("/Link/ChargeCurrent : {}".format(value))
 
         # Mode settings
         if path == '/Mode': # 1=Charger Only;2=Inverter Only;3=On;4=Off(?)
             if value == 1:
-                logging.warning("setting mode to 'Charger Only'(Charger=Util) ({})".format(setChargerPriority(1), setOutputSource(1)))
+                logging.info("setting mode to 'Charger Only'(Charger=Util) ({})".format(setChargerPriority(1), setOutputSource(1)))
             elif value == 2:
-                logging.warning("setting mode to 'Inverter Only'(Charger=Solar & Output=SBU) ({},{})".format(setChargerPriority(0), setOutputSource(2)))
+                logging.info("setting mode to 'Inverter Only'(Charger=Solar & Output=SBU) ({},{})".format(setChargerPriority(0), setOutputSource(2)))
             elif value == 3:
-                logging.warning("setting mode to 'ON=Charge+Invert'(Charger=Util & Output=SBU) ({},{})".format(setChargerPriority(1), setOutputSource(2)))
+                logging.info("setting mode to 'ON=Charge+Invert'(Charger=Util & Output=SBU) ({},{})".format(setChargerPriority(1), setOutputSource(2)))
             elif value == 4:
-                logging.warning("setting mode to 'OFF'(Charger=Solar) ({})".format(setChargerPriority(3), setOutputSource(2)))
+                logging.info("setting mode to 'OFF'(Charger=Solar) ({})".format(setChargerPriority(3), setOutputSource(2)))
             else:
-                logging.warning("setting mode not understood ({})".format(value))
+                logging.info("setting mode not understood ({})".format(value))
             self._queued_updates.append((path, value))        
         return True # accept the change
 
@@ -506,7 +548,7 @@ def main():
     DBusGMainLoop(set_as_default=True)
 
     mppservice = DbusMppSolarService(tty=args.serial, deviceinstance=0)
-    logging.warning('Created service & connected to dbus, switching over to GLib.MainLoop() (= event based)')
+    logging.info('Created service & connected to dbus, switching over to GLib.MainLoop() (= event based)')
 
     global mainloop
 
