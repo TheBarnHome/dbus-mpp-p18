@@ -38,7 +38,7 @@ else
 fi
 
 echo "📦 Updating packages and installing dependencies..."
-opkg update
+#opkg update
 opkg install python3-pip git
 
 echo "🐍 Installing 'inverterd' via pip3..."
