@@ -1,13 +1,13 @@
 {
   "/dev/hidraw1": {
     "productname": "Master",
-    "deviceinstance": 0,
+    "deviceinstance": 1,
     "numberOfChargers": 2,
     "updateInterval": 10000
   },
   "/dev/hidraw0": {
     "productname": "Slave_1",
-    "deviceinstance": 1,
+    "deviceinstance": 2,
     "numberOfChargers": 2,
     "updateInterval": 10000
   }
