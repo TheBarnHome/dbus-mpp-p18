@@ -120,6 +120,35 @@ This script will:
 
 ---
 
+## 🔄 Safe updates
+
+Run updates directly on the Venus OS device:
+
+```bash
+cd /data/etc/dbus-mppsolar
+bash update.sh --dry-run
+bash update.sh
+```
+
+The updater:
+
+- preserves the local `config.json`;
+- refuses to overwrite other local changes;
+- only accepts a fast-forward Git update;
+- creates a timestamped backup in `/data/etc/dbus-mppsolar-backups`;
+- validates Python, JSON, and shell syntax before restarting;
+- restarts only the `dbus-mppsolar`/`inverterd` processes;
+- verifies that every expected inverter and solar charger returns on D-Bus;
+- automatically rolls back to the previous Git revision if validation or restart fails.
+
+Use `bash update.sh --no-restart` to install an update without restarting the
+running services. The new code will then be used on their next restart.
+
+> ⚠️ `config.json` is the only local modification accepted automatically. Commit,
+> revert, or move any other local changes before running an update.
+
+---
+
 ## ⚙️ What It Does
 
 - Communicates with inverters using the **P18 protocol** over `/dev/hidrawX`

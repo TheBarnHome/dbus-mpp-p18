@@ -190,6 +190,7 @@ class DbusMppSolarService(object):
         global usb_path
 
         self._queued_updates = []
+        self._last_p18_alerts = None
         
         # For production history
         energyProductionDays = int(1)
@@ -242,6 +243,22 @@ class DbusMppSolarService(object):
         self._dbusinverter.add_path('/State', 0)                    #<- 0=Off; 1=Low Power; 2=Fault; 9=Inverting
         self._dbusinverter.add_path('/Temperature', 123)
 
+        # Standard Victron inverter alarms: 0=OK, 1=Warning, 2=Alarm.
+        self._dbusinverter.add_path('/Alarms/LowVoltage', 0)
+        self._dbusinverter.add_path('/Alarms/HighVoltage', 0)
+        self._dbusinverter.add_path('/Alarms/HighTemperature', 0)
+        self._dbusinverter.add_path('/Alarms/Overload', 0)
+
+        # P18 values without a reliable equivalent in the Victron inverter API.
+        # These paths remain useful through D-Bus/MQTT without creating false
+        # alarms in Venus OS (notably LineFail on an off-grid installation).
+        self._dbusinverter.add_path('/Diagnostics/P18/FaultCode', 0)
+        self._dbusinverter.add_path('/Diagnostics/P18/LineFail', 0)
+        self._dbusinverter.add_path('/Diagnostics/P18/OutputCircuitShort', 0)
+        self._dbusinverter.add_path('/Diagnostics/P18/FanLock', 0)
+        self._dbusinverter.add_path('/Diagnostics/P18/EepromFail', 0)
+        self._dbusinverter.add_path('/Diagnostics/P18/PowerLimit', 0)
+
         logging.info(f"Paths for Inverter created.")
 
         # Create paths for charger
@@ -281,10 +298,22 @@ class DbusMppSolarService(object):
         self._dbusmppt.add_path('/Yield/User', 0)
         self._dbusmppt.add_path('/Yield/System', 0)
         self._dbusmppt.add_path('/ErrorCode', 0)
+        self._dbusmppt.add_path('/DeviceOffReason', 0)
         self._dbusmppt.add_path('/State', 0)
-        self._dbusmppt.add_path('/Mode', 0)
+        # Victron ChargerMode only accepts 1 (On) or 4 (Off). Charging activity
+        # is reported separately through /State and /MppOperationMode.
+        self._dbusmppt.add_path('/Mode', 1)
         self._dbusmppt.add_path('/MppOperationMode', 0)
         self._dbusmppt.add_path('/Relay/0/State', None)
+
+        # Raw P18 solar warnings which do not all have an unambiguous Victron
+        # error code. They are intentionally exposed as diagnostics first.
+        self._dbusmppt.add_path('/Diagnostics/P18/Pv1VoltageHigh', 0)
+        self._dbusmppt.add_path('/Diagnostics/P18/Pv2VoltageHigh', 0)
+        self._dbusmppt.add_path('/Diagnostics/P18/Mppt1OverloadWarning', 0)
+        self._dbusmppt.add_path('/Diagnostics/P18/Mppt2OverloadWarning', 0)
+        self._dbusmppt.add_path('/Diagnostics/P18/BatteryTooLowToChargeForScc1', 0)
+        self._dbusmppt.add_path('/Diagnostics/P18/BatteryTooLowToChargeForScc2', 0)
         
         # history
         self._dbusmppt.add_path('/History/Overall/DaysAvailable', 1)
@@ -473,16 +502,95 @@ class DbusMppSolarService(object):
             m['/Dc/0/Voltage'] = data.get('data').get('battery_voltage', {}).get("value", m['/Dc/0/Voltage'])
             m['/Dc/0/Current'] = data.get('data').get('battery_charge_current', {}).get("value", m['/Dc/0/Current'])
 
-            # Error code handling
-            if alerts.get('data').get('fault_code') != 0:
-                if alerts.get('data').get('inverter_over_temperature'):
-                    m['/ErrorCode'] = 17
-                if alerts.get('data').get('mppt1_overload_warning'):
-                    m['/ErrorCode'] = 18
-                if alerts.get('data').get('inverter_over_temperature'):
-                    i['/ErrorCode'] = 17
-                if alerts.get('data').get('over_load'):
-                    i['/ErrorCode'] = 18
+            # P18 fault_code and warning flags are independent fields. Do not
+            # gate warning processing on fault_code: doing so hides warnings
+            # whenever the two-digit P18 fault code is zero.
+            alert_data = alerts.get('data')
+            if isinstance(alert_data, dict):
+                try:
+                    fault_code = int(alert_data.get('fault_code') or 0)
+                except (TypeError, ValueError):
+                    logging.warning("Invalid P18 fault_code: %r", alert_data.get('fault_code'))
+                    fault_code = 0
+
+                def is_active(name):
+                    return bool(alert_data.get(name, False))
+
+                inverter_fault = invMode == 'Fault mode' or fault_code != 0
+
+                def severity(active):
+                    if not active:
+                        return 0
+                    return 2 if inverter_fault else 1
+
+                battery_low = is_active('battery_low')
+                battery_under = is_active('battery_under')
+                output_circuit_short = is_active('output_circuit_short')
+
+                # Standard com.victronenergy.inverter alarm paths.
+                i['/Alarms/LowVoltage'] = 2 if battery_under else severity(battery_low)
+                i['/Alarms/HighVoltage'] = severity(is_active('battery_voltage_high'))
+                i['/Alarms/HighTemperature'] = severity(is_active('inverter_over_temperature'))
+                i['/Alarms/Overload'] = 2 if output_circuit_short else severity(is_active('over_load'))
+
+                # Preserve the complete P18 diagnosis without turning the
+                # expected off-grid LineFail flag into a Venus alarm.
+                i['/Diagnostics/P18/FaultCode'] = fault_code
+                i['/Diagnostics/P18/LineFail'] = int(is_active('line_fail'))
+                i['/Diagnostics/P18/OutputCircuitShort'] = int(output_circuit_short)
+                i['/Diagnostics/P18/FanLock'] = int(is_active('fan_lock'))
+                i['/Diagnostics/P18/EepromFail'] = int(is_active('eeprom_fail'))
+                i['/Diagnostics/P18/PowerLimit'] = int(is_active('power_limit'))
+
+                pv1_voltage_high = is_active('pv1_voltage_high')
+                pv2_voltage_high = is_active('pv2_voltage_high')
+                mppt1_overload = is_active('mppt1_overload_warning')
+                mppt2_overload = is_active('mppt2_overload_warning')
+                scc1_battery_low = is_active('battery_too_low_to_charge_for_scc1')
+                scc2_battery_low = is_active('battery_too_low_to_charge_for_scc2')
+
+                m['/Diagnostics/P18/Pv1VoltageHigh'] = int(pv1_voltage_high)
+                m['/Diagnostics/P18/Pv2VoltageHigh'] = int(pv2_voltage_high)
+                m['/Diagnostics/P18/Mppt1OverloadWarning'] = int(mppt1_overload)
+                m['/Diagnostics/P18/Mppt2OverloadWarning'] = int(mppt2_overload)
+                m['/Diagnostics/P18/BatteryTooLowToChargeForScc1'] = int(scc1_battery_low)
+                m['/Diagnostics/P18/BatteryTooLowToChargeForScc2'] = int(scc2_battery_low)
+
+                # Victron error 33 is PV over-voltage. MPPT overload remains a
+                # diagnostic because P18 does not say whether it is current or
+                # power overload (Victron codes 18/34/35 have different meanings).
+                m['/ErrorCode'] = 33 if (pv1_voltage_high or pv2_voltage_high) else 0
+
+                # Keep /Mode at 1. Off conditions are represented through State,
+                # MppOperationMode and the standard DeviceOffReason bitmask.
+                device_off_reason = 0
+                if data.get('data', {}).get('pv1_input_power', {}).get('value', 0) <= 0:
+                    device_off_reason |= 0x400  # No/low panel power.
+                if scc1_battery_low or scc2_battery_low:
+                    device_off_reason |= 0x800  # No/low battery power.
+                if m['/ErrorCode'] != 0:
+                    device_off_reason |= 0x8000  # Active alarm.
+                m['/DeviceOffReason'] = device_off_reason
+
+                normalized_alerts = {
+                    'fault_code': fault_code,
+                    **{name: bool(value) for name, value in alert_data.items() if name != 'fault_code'}
+                }
+                if normalized_alerts != self._last_p18_alerts:
+                    active_alerts = [
+                        name for name, value in normalized_alerts.items()
+                        if name != 'fault_code' and value
+                    ]
+                    logging.warning(
+                        "P18 alert status changed: fault_code=%s, active=%s",
+                        fault_code,
+                        ', '.join(active_alerts) if active_alerts else 'none'
+                    )
+                    self._last_p18_alerts = normalized_alerts
+            else:
+                # Preserve the last known alarm state on a transient malformed
+                # get-errors response instead of falsely clearing every alarm.
+                logging.warning("Ignoring invalid P18 get-errors response: %r", alerts)
             # History
             # if generatedToday.get("generated_energy_for_day") != 0 and generatedToday.get("generated_energy_for_day") != None:
             #     m["/History/Overall/Yield"] = generatedToday.get("generated_energy_for_day") / 1000
