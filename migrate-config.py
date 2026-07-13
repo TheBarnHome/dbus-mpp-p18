@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 
 from inverterd import Client, Format
@@ -25,12 +26,22 @@ from mppsolar_common import (
 )
 
 
-def command(port, name):
-    client = Client(port, "127.0.0.1")
-    client.sock.settimeout(10)
-    client.connect()
-    client.format(Format.JSON)
-    return json.loads(client.exec(name))
+def command(port, name, attempts=5):
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            client = Client(port, "127.0.0.1")
+            client.sock.settimeout(10)
+            client.connect()
+            client.format(Format.JSON)
+            return json.loads(client.exec(name))
+        except Exception as exc:
+            last_error = exc
+            if attempt + 1 < attempts:
+                time.sleep(2)
+    raise RuntimeError(
+        f"{name} failed on inverterd port {port} after {attempts} attempts"
+    ) from last_error
 
 
 def dbus_history(hidraw):

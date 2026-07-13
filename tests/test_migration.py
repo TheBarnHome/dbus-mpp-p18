@@ -21,6 +21,18 @@ SPEC.loader.exec_module(migrate_config)
 
 
 class MigrationTests(unittest.TestCase):
+    def test_command_retries_transient_crc_failure(self):
+        first = mock.Mock()
+        first.sock = mock.Mock()
+        first.exec.side_effect = RuntimeError("crc is invalid")
+        second = mock.Mock()
+        second.sock = mock.Mock()
+        second.exec.return_value = '{"result":"ok","data":{"sn":"SERIAL1"}}'
+        with mock.patch.object(migrate_config, "Client", side_effect=[first, second]), \
+                mock.patch.object(migrate_config.time, "sleep"):
+            result = migrate_config.command(8306, "get-serial-number", attempts=2)
+        self.assertEqual(result["data"]["sn"], "SERIAL1")
+
     def test_exact_current_installation_mapping(self):
         legacy = {
             "/dev/hidraw1": {
