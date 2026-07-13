@@ -17,7 +17,9 @@ SPEC.loader.exec_module(verify_runtime)
 
 class RuntimeReadTests(unittest.TestCase):
     def test_subprocess_value_is_decoded(self):
-        completed = subprocess.CompletedProcess([], 0, stdout='"Master"\n', stderr="")
+        completed = subprocess.CompletedProcess(
+            [], 0, stdout='{"/CustomName":"Master"}\n', stderr=""
+        )
         with mock.patch.object(verify_runtime.subprocess, "run", return_value=completed):
             self.assertEqual(
                 verify_runtime.read_value(None, "com.example", "/CustomName"),

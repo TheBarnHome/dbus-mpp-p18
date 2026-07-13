@@ -29,19 +29,22 @@ import json
 import sys
 
 bus = dbus.SystemBus()
-value = bus.get_object(sys.argv[1], sys.argv[2]).GetValue(
-    dbus_interface="com.victronenergy.BusItem"
-)
-if not isinstance(value, (str, int, float, bool, list, dict)):
-    value = str(value)
-print(json.dumps(value))
+values = {}
+for path in sys.argv[2:]:
+    value = bus.get_object(sys.argv[1], path).GetValue(
+        dbus_interface="com.victronenergy.BusItem"
+    )
+    if not isinstance(value, (str, int, float, bool, list, dict)):
+        value = str(value)
+    values[path] = value
+print(json.dumps(values))
 '''
 
 
-def read_value(bus, service, path, timeout=12):
+def read_values(service, paths, timeout=20):
     try:
         result = subprocess.run(
-            [sys.executable, "-c", DBUS_READ_SCRIPT, service, path],
+            [sys.executable, "-c", DBUS_READ_SCRIPT, service, *paths],
             check=True,
             capture_output=True,
             text=True,
@@ -49,11 +52,15 @@ def read_value(bus, service, path, timeout=12):
         )
         return json.loads(result.stdout)
     except subprocess.TimeoutExpired as exc:
-        raise ReadTimeout(f"D-Bus read timed out: {service} {path}") from exc
+        raise ReadTimeout(f"D-Bus read timed out: {service}") from exc
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(
-            f"D-Bus read failed: {service} {path}: {exc.stderr.strip()}"
+            f"D-Bus read failed: {service}: {exc.stderr.strip()}"
         ) from exc
+
+
+def read_value(bus, service, path, timeout=20):
+    return read_values(service, [path], timeout)[path]
 
 
 def verify(require_migrated=False):
@@ -69,9 +76,14 @@ def verify(require_migrated=False):
 
     manager = "com.victronenergy.mppsolar.manager"
     check(manager in names, "manager D-Bus service is missing")
+    manager_values = {}
     if manager in names:
         try:
-            count = int(read_value(bus, manager, "/DeviceCount"))
+            manager_paths = ["/DeviceCount"] + [
+                f"/Devices/{index}/Serial" for index in range(len(manifest))
+            ]
+            manager_values = read_values(manager, manager_paths)
+            count = int(manager_values["/DeviceCount"])
             report.append(f"manager devices={count}")
             check(count == len(manifest), f"manager reports {count}, manifest has {len(manifest)}")
         except Exception as exc:
@@ -86,22 +98,34 @@ def verify(require_migrated=False):
         if inverter not in names or charger not in names:
             continue
         try:
-            inv_serial = str(read_value(bus, inverter, "/Serial"))
-            chg_serial = str(read_value(bus, charger, "/Serial"))
-            inv_name = str(read_value(bus, inverter, "/CustomName"))
-            chg_name = str(read_value(bus, charger, "/CustomName"))
-            inv_instance = int(read_value(bus, inverter, "/DeviceInstance"))
-            chg_instance = int(read_value(bus, charger, "/DeviceInstance"))
-            inv_poll = int(read_value(bus, inverter, "/Settings/PollInterval"))
-            chg_poll = int(read_value(bus, charger, "/Settings/PollInterval"))
-            inverter_mode = int(read_value(bus, inverter, "/Mode"))
-            charger_mode = int(read_value(bus, charger, "/Mode"))
-            topology = int(read_value(bus, inverter, "/Diagnostics/P18/NumberOfChargers"))
-            hidraw = str(read_value(bus, inverter, "/Diagnostics/P18/CurrentHidraw"))
             setting_base = settings_prefix(serial)
-            saved_name = str(read_value(bus, "com.victronenergy.settings", f"{setting_base}/CustomName"))
-            saved_instance = int(read_value(bus, "com.victronenergy.settings", f"{setting_base}/DeviceInstance"))
-            saved_poll = int(read_value(bus, "com.victronenergy.settings", f"{setting_base}/PollInterval"))
+            inv_values = read_values(inverter, [
+                "/Serial", "/CustomName", "/DeviceInstance", "/Settings/PollInterval",
+                "/Mode", "/Diagnostics/P18/NumberOfChargers", "/Diagnostics/P18/CurrentHidraw",
+            ])
+            chg_values = read_values(charger, [
+                "/Serial", "/CustomName", "/DeviceInstance", "/Settings/PollInterval", "/Mode",
+            ])
+            setting_values = read_values("com.victronenergy.settings", [
+                f"{setting_base}/CustomName",
+                f"{setting_base}/DeviceInstance",
+                f"{setting_base}/PollInterval",
+            ])
+            inv_serial = str(inv_values["/Serial"])
+            chg_serial = str(chg_values["/Serial"])
+            inv_name = str(inv_values["/CustomName"])
+            chg_name = str(chg_values["/CustomName"])
+            inv_instance = int(inv_values["/DeviceInstance"])
+            chg_instance = int(chg_values["/DeviceInstance"])
+            inv_poll = int(inv_values["/Settings/PollInterval"])
+            chg_poll = int(chg_values["/Settings/PollInterval"])
+            inverter_mode = int(inv_values["/Mode"])
+            charger_mode = int(chg_values["/Mode"])
+            topology = int(inv_values["/Diagnostics/P18/NumberOfChargers"])
+            hidraw = str(inv_values["/Diagnostics/P18/CurrentHidraw"])
+            saved_name = str(setting_values[f"{setting_base}/CustomName"])
+            saved_instance = int(setting_values[f"{setting_base}/DeviceInstance"])
+            saved_poll = int(setting_values[f"{setting_base}/PollInterval"])
             check(inv_serial == serial and chg_serial == serial, f"serial mismatch for {serial}")
             check(inv_name == chg_name, f"name mismatch for {serial}")
             check(inv_instance == chg_instance, f"Device Instance mismatch for {serial}")
@@ -113,7 +137,7 @@ def verify(require_migrated=False):
             check(inv_name == saved_name, f"name not persisted for {serial}")
             check(inv_instance == saved_instance, f"instance not persisted for {serial}")
             check(inv_poll == saved_poll, f"poll interval not persisted for {serial}")
-            manager_serial = str(read_value(bus, manager, f"/Devices/{index}/Serial"))
+            manager_serial = str(manager_values.get(f"/Devices/{index}/Serial", ""))
             check(manager_serial == serial, f"manager slot {index} serial mismatch")
             check(HistoryStore(serial).path.exists(), f"history file missing for {serial}")
             report.append(
