@@ -76,12 +76,32 @@ def bare_manager():
     manager.records = {}
     manager.failed = {}
     manager._last_topology = frozenset()
+    manager._topology_counts = {}
+    manager._topology_running = False
+    manager._next_topology_refresh = 0.0
     manager._update_service = mock.Mock()
-    manager._notify_topology_change = mock.Mock()
+    manager._schedule_topology_refresh = mock.Mock()
     return manager
 
 
 class ManagerScanTests(unittest.TestCase):
+    def test_new_serial_gets_smallest_free_persistent_instance(self):
+        manager = object.__new__(mppsolar_manager.MppSolarManager)
+        manager.manifest = {
+            "EXISTING1": {"device_instance": 1},
+            "EXISTING3": {"device_instance": 3},
+        }
+        manager._used_device_instances = mock.Mock(return_value={1, 3})
+        manager._read_setting = mock.Mock(side_effect=lambda serial, name, default: default)
+        with mock.patch.object(mppsolar_manager, "save_manifest") as save:
+            manager._ensure_manifest_entry("NEWSERIAL")
+        self.assertEqual(manager.manifest["NEWSERIAL"], {
+            "custom_name": "MPP Solar SERIAL",
+            "device_instance": 2,
+            "poll_interval": 10,
+        })
+        save.assert_called_once_with(manager.manifest)
+
     def test_new_hidraw_is_started_and_backoff_is_honoured(self):
         manager = bare_manager()
         manager._start_device = mock.Mock()
@@ -122,6 +142,50 @@ class ManagerScanTests(unittest.TestCase):
             manager.scan()
         self.assertNotIn("/dev/hidraw0", manager.records)
         manager._start_device.assert_called_once_with("/dev/hidraw3")
+
+
+class ManagerTopologyTests(unittest.TestCase):
+    def test_each_backend_gets_its_parallel_group_count(self):
+        responses = {
+            (8400, 0): {
+                "result": "ok", "data": {
+                    "parallel_connection_status": "Existent", "serial_number": "A1"
+                },
+            },
+            (8400, 1): {
+                "result": "ok", "data": {
+                    "parallel_connection_status": "Existent", "serial_number": "A2"
+                },
+            },
+            (8401, 0): {
+                "result": "ok", "data": {
+                    "parallel_connection_status": "Existent", "serial_number": "B1"
+                },
+            },
+        }
+
+        def command(port, name, params=()):
+            self.assertEqual(name, "get-p-rated")
+            try:
+                return responses[(port, params[0])]
+            except KeyError as exc:
+                raise RuntimeError("missing parallel member") from exc
+
+        with mock.patch.object(mppsolar_manager, "exec_command", side_effect=command):
+            counts = mppsolar_manager.MppSolarManager._calculate_topology(
+                (("A1", 8400), ("B1", 8401))
+            )
+
+        self.assertEqual(counts, {"A1": 2, "B1": 1})
+
+    def test_failed_queries_fall_back_to_active_device_count(self):
+        with mock.patch.object(
+            mppsolar_manager, "exec_command", side_effect=RuntimeError("timeout")
+        ):
+            counts = mppsolar_manager.MppSolarManager._calculate_topology(
+                (("A1", 8400), ("A2", 8401))
+            )
+        self.assertEqual(counts, {"A1": 2, "A2": 2})
 
 
 if __name__ == "__main__":

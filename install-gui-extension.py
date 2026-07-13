@@ -157,9 +157,14 @@ def main():
         shutil.copy2(backup, target)
         print(f"Restored {target} from {backup}")
         return 0
-    patch_target(target)
-    if not args.no_rc_local:
-        install_rc_local(Path(__file__).resolve())
+    patched = patch_target(target)
+    try:
+        if not args.no_rc_local:
+            install_rc_local(Path(__file__).resolve())
+    except Exception:
+        if patched and backup.exists():
+            shutil.copy2(backup, target)
+        raise
     return 0
 
 

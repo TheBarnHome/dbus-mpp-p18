@@ -5,7 +5,7 @@ Handle automatic connection with MPP Solar inverter compatible device (VEVOR)
 This will output 2 dbus services, one for Inverter data another one for control
 via VRM of the features.
 """
-VERSION = 'v0.3'
+VERSION = 'v0.4'
 
 from gi.repository import GLib
 import platform
@@ -35,7 +35,6 @@ from mppsolar_common import (
     POLL_DEFAULT,
     allocate_instance,
     clamp_poll_interval,
-    count_parallel_members,
     load_manifest,
     service_suffix,
     settings_prefix,
@@ -331,10 +330,9 @@ class DbusMppSolarService(object):
         self._dbusmppt.add_path('/Diagnostics/P18/NumberOfChargers', 1)
         self._dbusinverter.add_path('/Diagnostics/P18/CurrentHidraw', self.tty)
         self._dbusinverter.add_path('/Diagnostics/P18/BackendPort', port)
-        self._dbusinverter.add_path('/Diagnostics/P18/NumberOfChargers', 1)
         self._dbusinverter.add_path(
-            '/Diagnostics/P18/RefreshTopology', 0, writeable=True,
-            onchangecallback=self._change_refresh_topology,
+            '/Diagnostics/P18/NumberOfChargers', 1, writeable=True,
+            onchangecallback=self._change_number_of_chargers,
         )
         
         # history
@@ -359,9 +357,7 @@ class DbusMppSolarService(object):
         logging.info(f'Added to D-Bus: {self._dbusmppt}')
 
         self._schedule_poll()
-        GLib.timeout_add_seconds(60, self._refresh_parallel_count)
         GLib.timeout_add_seconds(300, self._save_history)
-        self._refresh_parallel_count()
         self._initializing = False
 
     def _used_device_instances(self):
@@ -452,27 +448,16 @@ class DbusMppSolarService(object):
         self._settings['device_instance'] = value
         return True
 
-    def _change_refresh_topology(self, path, value):
-        GLib.idle_add(self._refresh_parallel_count)
-        return True
-
-    def _refresh_parallel_count(self):
+    def _change_number_of_chargers(self, path, value):
         global numberOfChargers
-        responses = []
-        for parallel_id in range(7):
-            try:
-                responses.append(runInverterCommands('get-p-rated', (parallel_id,), timeout_sec=4))
-            except Exception:
-                continue
-        fallback = 1
         try:
-            names = dbusconnection().list_names()
-            fallback = len([name for name in names if name.startswith('com.victronenergy.inverter.mppsolar-inverter.sn_')])
-        except Exception:
-            pass
-        numberOfChargers = count_parallel_members(responses, fallback)
-        self._dbusinverter['/Diagnostics/P18/NumberOfChargers'] = numberOfChargers
-        self._dbusmppt['/Diagnostics/P18/NumberOfChargers'] = numberOfChargers
+            count = int(value)
+        except (TypeError, ValueError):
+            return False
+        if not 1 <= count <= 7:
+            return False
+        numberOfChargers = count
+        self._dbusmppt['/Diagnostics/P18/NumberOfChargers'] = count
         return True
 
     def _save_history(self):
@@ -598,7 +583,7 @@ class DbusMppSolarService(object):
             rated = runInverterCommands('get-rated')
             alerts = runInverterCommands('get-errors')
 
-        except:
+        except Exception as exc:
             results = {
                 "generated": generated,
                 "data": data,

@@ -116,10 +116,25 @@ list_expected_serials() {
         python3 -c 'from mppsolar_common import load_manifest; print(" ".join(sorted(load_manifest())))'
 }
 
+list_active_serials() {
+    python3 -c '
+import dbus
+bus = dbus.SystemBus()
+service = "com.victronenergy.mppsolar.manager"
+if service not in bus.list_names():
+    raise SystemExit(1)
+def read(path):
+    return bus.get_object(service, path).GetValue(
+        dbus_interface="com.victronenergy.BusItem", timeout=5
+    )
+count = int(read("/DeviceCount"))
+print(" ".join(str(read(f"/Devices/{index}/Serial")) for index in range(count)))
+'
+}
+
 check_services() {
-    local elapsed=0 names serial suffix ready
-    EXPECTED_SERIALS=$(list_expected_serials)
-    [ -n "$EXPECTED_SERIALS" ] || { log "No migrated serial is available for verification."; return 1; }
+    local elapsed=0 names serial suffix ready legacy_arg=""
+    [ ! -f "$INSTALL_DIR/config.json.legacy" ] || legacy_arg="--require-legacy-backup"
     log "Waiting for manager and serial-indexed D-Bus services..."
     while [ "$elapsed" -lt 60 ]; do
         names=$(dbus-send --system --print-reply --dest=org.freedesktop.DBus \
@@ -132,7 +147,8 @@ check_services() {
             printf '%s\n' "$names" | grep -Fq "com.victronenergy.solarcharger.mppsolar-charger.$suffix" || ready=0
         done
         if [ "$ready" -eq 1 ]; then
-            if python3 "$INSTALL_DIR/verify-runtime.py" --require-migrated; then
+            if DBUS_MPP_EXPECTED_SERIALS="$EXPECTED_SERIALS" \
+                python3 "$INSTALL_DIR/verify-runtime.py" --require-migrated $legacy_arg; then
                 log "All expected D-Bus services and values are valid."
                 return 0
             fi
@@ -315,8 +331,7 @@ if [ "$NO_RESTART" -eq 0 ] && [ -f config.json ]; then
         python3 "$UPDATE_SOURCE_DIR/migrate-config.py" --config "$INSTALL_DIR/config.json"
 fi
 if [ "$NO_RESTART" -eq 0 ]; then
-    EXPECTED_SERIALS=$(list_expected_serials)
-    [ -n "$EXPECTED_SERIALS" ] || { log "No serial-indexed manifest; refusing restart."; exit 1; }
+    EXPECTED_SERIALS=$(list_active_serials 2>/dev/null || list_expected_serials)
 fi
 
 UPDATE_STARTED=1

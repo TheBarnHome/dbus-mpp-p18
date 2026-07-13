@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 
@@ -63,7 +64,7 @@ def read_value(bus, service, path, timeout=20):
     return read_values(service, [path], timeout)[path]
 
 
-def verify(require_migrated=False):
+def verify(require_migrated=False, expected_serials=(), require_legacy_backup=False):
     bus = dbus.SystemBus()
     names = set(bus.list_names())
     manifest = load_manifest()
@@ -77,19 +78,36 @@ def verify(require_migrated=False):
     manager = "com.victronenergy.mppsolar.manager"
     check(manager in names, "manager D-Bus service is missing")
     manager_values = {}
+    active_serials = []
     if manager in names:
         try:
-            manager_paths = ["/DeviceCount"] + [
-                f"/Devices/{index}/Serial" for index in range(len(manifest))
+            count = int(read_value(bus, manager, "/DeviceCount"))
+            manager_paths = [
+                path
+                for index in range(count)
+                for path in (
+                    f"/Devices/{index}/Serial",
+                    f"/Devices/{index}/NumberOfChargers",
+                )
             ]
-            manager_values = read_values(manager, manager_paths)
-            count = int(manager_values["/DeviceCount"])
+            manager_values = read_values(manager, manager_paths) if manager_paths else {}
+            active_serials = [
+                str(manager_values[f"/Devices/{index}/Serial"])
+                for index in range(count)
+            ]
             report.append(f"manager devices={count}")
-            check(count == len(manifest), f"manager reports {count}, manifest has {len(manifest)}")
+            check(len(set(active_serials)) == count, "manager contains duplicate serial slots")
+            for serial in active_serials:
+                check(serial in manifest, f"active serial {serial} is missing from manifest")
+            missing_expected = set(expected_serials) - set(active_serials)
+            check(
+                not missing_expected,
+                "expected serials are not active: " + ", ".join(sorted(missing_expected)),
+            )
         except Exception as exc:
             failures.append(f"manager /DeviceCount: {exc}")
 
-    for index, serial in enumerate(sorted(manifest)):
+    for index, serial in enumerate(active_serials):
         suffix = service_suffix(serial)
         inverter = f"com.victronenergy.inverter.mppsolar-inverter.{suffix}"
         charger = f"com.victronenergy.solarcharger.mppsolar-charger.{suffix}"
@@ -138,7 +156,14 @@ def verify(require_migrated=False):
             check(inv_instance == saved_instance, f"instance not persisted for {serial}")
             check(inv_poll == saved_poll, f"poll interval not persisted for {serial}")
             manager_serial = str(manager_values.get(f"/Devices/{index}/Serial", ""))
+            manager_topology = int(
+                manager_values.get(f"/Devices/{index}/NumberOfChargers", 0)
+            )
             check(manager_serial == serial, f"manager slot {index} serial mismatch")
+            check(
+                manager_topology == topology,
+                f"topology mismatch for {serial}: manager={manager_topology}, driver={topology}",
+            )
             check(HistoryStore(serial).path.exists(), f"history file missing for {serial}")
             report.append(
                 f"{serial} name={inv_name!r} instance={inv_instance} poll={inv_poll}s "
@@ -149,6 +174,7 @@ def verify(require_migrated=False):
 
     if require_migrated:
         check(not LEGACY_CONFIG_PATH.exists(), "config.json is still present")
+    if require_legacy_backup:
         check(
             LEGACY_CONFIG_PATH.with_name("config.json.legacy").exists(),
             "config.json.legacy is missing",
@@ -164,8 +190,17 @@ def verify(require_migrated=False):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--require-migrated", action="store_true")
+    parser.add_argument("--require-legacy-backup", action="store_true")
+    parser.add_argument(
+        "--expected-serials",
+        default=os.environ.get("DBUS_MPP_EXPECTED_SERIALS", ""),
+        help="space-separated serials which must still be connected",
+    )
     args = parser.parse_args()
-    return 0 if verify(args.require_migrated) else 1
+    expected = tuple(filter(None, args.expected_serials.split()))
+    return 0 if verify(
+        args.require_migrated, expected, args.require_legacy_backup
+    ) else 1
 
 
 if __name__ == "__main__":

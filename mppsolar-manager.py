@@ -11,6 +11,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,9 +25,10 @@ from vedbus import VeDbusItemImport, VeDbusService
 
 from mppsolar_common import (
     INSTALL_DIR,
-    LEGACY_CONFIG_PATH,
-    MANIFEST_PATH,
+    POLL_DEFAULT,
+    allocate_instance,
     clamp_poll_interval,
+    count_parallel_members,
     load_manifest,
     protocol_id_from_response,
     save_manifest,
@@ -36,8 +38,9 @@ from mppsolar_common import (
 )
 
 
-VERSION = "0.3"
+VERSION = "0.4"
 SCAN_INTERVAL = 2
+TOPOLOGY_INTERVAL = 60
 MAX_DEVICES = 7
 PORT_BASE = 8400
 LOG_DIR = Path(os.environ.get("DBUS_MPP_LOG_DIR", "/var/log/dbus-mppsolar"))
@@ -89,6 +92,9 @@ class MppSolarManager:
         self.records: dict[str, DeviceRecord] = {}
         self.failed: dict[str, tuple[float, int]] = {}
         self._last_topology = frozenset()
+        self._topology_counts: dict[str, int] = {}
+        self._topology_running = False
+        self._next_topology_refresh = 0.0
         self.manifest = load_manifest()
         self.bus = dbusconnection()
         self.service = VeDbusService(
@@ -127,6 +133,7 @@ class MppSolarManager:
                 f"{prefix}/PollInterval", 10, writeable=True,
                 onchangecallback=self._slot_writer(index, "PollInterval"),
             )
+            service.add_path(f"{prefix}/NumberOfChargers", 1)
 
     def _ordered_records(self):
         return sorted(self.records.values(), key=lambda record: record.serial)
@@ -136,6 +143,7 @@ class MppSolarManager:
             records = self._ordered_records()
             if index >= len(records):
                 return False
+            serial = records[index].serial
             if setting_name == "PollInterval":
                 try:
                     if not 5 <= int(value) <= 60:
@@ -150,9 +158,11 @@ class MppSolarManager:
                     value = int(value)
                 except (TypeError, ValueError):
                     return False
+                current = int(self._read_setting(serial, "DeviceInstance", 0))
+                if value != current and value in self._used_device_instances(serial):
+                    return False
             elif setting_name == "CustomName":
                 value = str(value)[:32]
-            serial = records[index].serial
             item = VeDbusItemImport(
                 self.bus,
                 "com.victronenergy.settings",
@@ -202,26 +212,58 @@ class MppSolarManager:
                 time.sleep(1)
         raise RuntimeError(f"P18 validation failed: {last_error}")
 
-    def _legacy_defaults(self, path, serial):
-        if serial in self.manifest or not LEGACY_CONFIG_PATH.exists():
-            return
+    def _used_device_instances(self, exclude_serial=None):
+        used = set()
+        for serial, item in self.manifest.items():
+            if serial == exclude_serial:
+                continue
+            try:
+                instance = int(item.get("device_instance", 0))
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if instance > 0:
+                used.add(instance)
         try:
-            with LEGACY_CONFIG_PATH.open(encoding="utf-8") as handle:
-                legacy = json.load(handle)
-            item = legacy.get(path, {})
-            if not isinstance(item, dict):
-                return
-            self.manifest[serial] = {
-                "custom_name": str(item.get("productname") or f"MPP Solar {serial[-6:]}")[:32],
-                "device_instance": int(item.get("deviceinstance") or 0),
-                "poll_interval": clamp_poll_interval(
-                    int(item.get("updateInterval", 10000)) // 1000
-                ),
-            }
-            save_manifest(self.manifest)
-            logging.info("Migrated legacy defaults for serial %s", serial)
+            for name in self.bus.list_names():
+                if not (
+                    name.startswith("com.victronenergy.inverter.")
+                    or name.startswith("com.victronenergy.solarcharger.")
+                ):
+                    continue
+                if exclude_serial and name.endswith(service_suffix(exclude_serial)):
+                    continue
+                value = VeDbusItemImport(
+                    self.bus, name, "/DeviceInstance", createsignal=False
+                ).get_value()
+                if value is not None:
+                    used.add(int(value))
         except Exception:
-            logging.exception("Unable to migrate legacy defaults for %s", path)
+            logging.warning("Unable to enumerate active Device Instances")
+        return used
+
+    def _ensure_manifest_entry(self, serial):
+        if serial in self.manifest:
+            return
+        default_name = f"MPP Solar {serial[-6:]}"
+        preferred_instance = self._read_setting(serial, "DeviceInstance", 0)
+        try:
+            preferred_instance = int(preferred_instance)
+        except (TypeError, ValueError):
+            preferred_instance = 0
+        instance = allocate_instance(
+            self._used_device_instances(), preferred_instance or None
+        )
+        self.manifest[serial] = {
+            "custom_name": str(
+                self._read_setting(serial, "CustomName", default_name)
+            )[:32],
+            "device_instance": instance,
+            "poll_interval": clamp_poll_interval(
+                self._read_setting(serial, "PollInterval", POLL_DEFAULT)
+            ),
+        }
+        save_manifest(self.manifest)
+        logging.info("Registered new serial %s as Device Instance %s", serial, instance)
 
     def _start_device(self, path):
         port = self._free_port()
@@ -237,7 +279,7 @@ class MppSolarManager:
                 raise RuntimeError(
                     f"duplicate serial {serial} already active on {duplicate.path}"
                 )
-            self._legacy_defaults(path, serial)
+            self._ensure_manifest_entry(serial)
             driver = subprocess.Popen(
                 [
                     sys.executable,
@@ -299,6 +341,7 @@ class MppSolarManager:
 
     def _update_service(self):
         records = self._ordered_records()
+        manifest_changed = False
         self.service["/DeviceCount"] = len(records)
         for index in range(MAX_DEVICES):
             prefix = f"/Devices/{index}"
@@ -307,6 +350,7 @@ class MppSolarManager:
                     ("Connected", 0), ("Serial", ""), ("Hidraw", ""),
                     ("InverterService", ""), ("ChargerService", ""),
                     ("CustomName", ""), ("DeviceInstance", 0), ("PollInterval", 10),
+                    ("NumberOfChargers", 1),
                 ):
                     self.service[f"{prefix}/{key}"] = value
                 continue
@@ -320,44 +364,128 @@ class MppSolarManager:
             self.service[f"{prefix}/Hidraw"] = record.path
             self.service[f"{prefix}/InverterService"] = inverter_service
             self.service[f"{prefix}/ChargerService"] = charger_service
-            self.service[f"{prefix}/CustomName"] = self._read_setting(
+            custom_name = str(self._read_setting(
                 record.serial, "CustomName", saved.get("custom_name", "")
-            )
-            self.service[f"{prefix}/DeviceInstance"] = self._read_setting(
+            ))[:32]
+            device_instance = int(self._read_setting(
                 record.serial, "DeviceInstance", saved.get("device_instance", 0)
-            )
-            self.service[f"{prefix}/PollInterval"] = self._read_setting(
+            ))
+            poll_interval = clamp_poll_interval(self._read_setting(
                 record.serial, "PollInterval", saved.get("poll_interval", 10)
+            ))
+            self.service[f"{prefix}/CustomName"] = custom_name
+            self.service[f"{prefix}/DeviceInstance"] = device_instance
+            self.service[f"{prefix}/PollInterval"] = poll_interval
+            self.service[f"{prefix}/NumberOfChargers"] = self._topology_counts.get(
+                record.serial, max(1, len(records))
             )
+            current_manifest = {
+                "custom_name": custom_name,
+                "device_instance": device_instance,
+                "poll_interval": poll_interval,
+            }
+            if self.manifest.get(record.serial) != current_manifest:
+                self.manifest[record.serial] = current_manifest
+                manifest_changed = True
+        if manifest_changed:
+            save_manifest(self.manifest)
 
-    def _notify_topology_change(self):
-        topology = frozenset(record.serial for record in self.records.values())
-        if topology == self._last_topology:
-            return
-        if not topology:
-            self._last_topology = topology
-            return
-        marker = int(time.time())
-        complete = True
-        for record in self.records.values():
-            service = (
-                "com.victronenergy.inverter.mppsolar-inverter."
-                + service_suffix(record.serial)
-            )
+    @staticmethod
+    def _calculate_topology(snapshot):
+        fallback = max(1, len(snapshot))
+        counts = {}
+        for serial, port in snapshot:
+            responses = []
+            for parallel_id in range(7):
+                try:
+                    responses.append(exec_command(port, "get-p-rated", (parallel_id,)))
+                except Exception:
+                    continue
+            counts[serial] = count_parallel_members(responses, fallback)
+        return counts
+
+    @staticmethod
+    def _publish_topology_count(serial, count):
+        service = (
+            "com.victronenergy.inverter.mppsolar-inverter."
+            + service_suffix(serial)
+        )
+        for attempt in range(3):
+            bus = dbusconnection()
             try:
-                item = VeDbusItemImport(
-                    self.bus, service, '/Diagnostics/P18/RefreshTopology',
-                    createsignal=False,
+                item = bus.get_object(
+                    service, "/Diagnostics/P18/NumberOfChargers"
                 )
-                if item.exists:
-                    item.set_value(marker)
-                else:
-                    complete = False
+                item.SetValue(
+                    dbus.Int32(count),
+                    dbus_interface="com.victronenergy.BusItem",
+                    timeout=5,
+                )
+                return True
             except Exception:
-                complete = False
-                logging.debug("Topology refresh deferred for %s", record.serial)
-        if complete:
+                if attempt < 2:
+                    time.sleep(1)
+            finally:
+                close = getattr(bus, "close", None)
+                if close:
+                    close()
+        logging.warning("Unable to publish topology for %s", serial)
+        return False
+
+    def _topology_worker(self, snapshot):
+        try:
+            counts = self._calculate_topology(snapshot)
+            published = {
+                serial: self._publish_topology_count(serial, count)
+                for serial, count in counts.items()
+            }
+            GLib.idle_add(self._apply_topology, snapshot, counts, published)
+        except Exception:
+            logging.exception("Unable to calculate parallel topology")
+            GLib.idle_add(self._apply_topology, snapshot, {}, {})
+
+    def _apply_topology(self, snapshot, counts, published):
+        self._topology_running = False
+        current = frozenset(record.serial for record in self.records.values())
+        snapshot_serials = frozenset(serial for serial, _ in snapshot)
+        if current == snapshot_serials:
+            fallback = max(1, len(current))
+            self._topology_counts = {
+                serial: max(1, int(counts.get(serial, fallback)))
+                for serial in current
+            }
+            self._last_topology = current
+            retry_interval = (
+                TOPOLOGY_INTERVAL if all(published.get(serial, False) for serial in current)
+                else 5
+            )
+            self._next_topology_refresh = time.monotonic() + retry_interval
+            self._update_service()
+        else:
+            self._next_topology_refresh = 0.0
+        return False
+
+    def _schedule_topology_refresh(self):
+        topology = frozenset(record.serial for record in self.records.values())
+        if not topology:
+            self._topology_counts = {}
             self._last_topology = topology
+            self._next_topology_refresh = time.monotonic() + TOPOLOGY_INTERVAL
+            return
+        if self._topology_running:
+            return
+        if topology == self._last_topology and time.monotonic() < self._next_topology_refresh:
+            return
+        snapshot = tuple(
+            (record.serial, record.port) for record in self._ordered_records()
+        )
+        self._topology_running = True
+        threading.Thread(
+            target=self._topology_worker,
+            args=(snapshot,),
+            name="mppsolar-topology",
+            daemon=True,
+        ).start()
 
     def scan(self):
         paths = set(glob.glob("/dev/hidraw*"))
@@ -385,7 +513,7 @@ class MppSolarManager:
             if path not in paths:
                 self.failed.pop(path, None)
         self._update_service()
-        self._notify_topology_change()
+        self._schedule_topology_refresh()
         return True
 
     def shutdown(self):
