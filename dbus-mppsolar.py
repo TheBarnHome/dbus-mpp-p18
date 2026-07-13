@@ -21,6 +21,8 @@ import dbus.service
 import time
 import atexit
 import signal
+import threading
+import traceback
 from inverterd import Client, Format
 
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
@@ -182,6 +184,8 @@ class DbusMppSolarService(object):
         self._restart_requested = False
         self.exit_code = 0
         self._consecutive_errors = 0
+        self._poll_in_progress = False
+        self._poll_thread = None
         self._poll_source = None
         self._queued_updates = []
         self._last_p18_alerts = None
@@ -528,22 +532,69 @@ class DbusMppSolarService(object):
             self._queued_updates = []
 
     def _update(self):
-        global mainloop
         logging.info("{} updating".format(datetime.datetime.now().time()))
-        try:
-            result = self._update_PI18()
-            self._consecutive_errors = 0
-            return result
-        except Exception:
-            logging.exception('Error in update loop', exc_info=True)
-            self._consecutive_errors += 1
-            self._updateInternal()
-            if self._consecutive_errors >= 3:
-                logging.error("Three consecutive polling failures; asking manager to restart device")
-                self.exit_code = 1
-                mainloop.quit()
-                return False
+        if self._poll_in_progress:
+            logging.warning("Skipping polling tick: previous P18 cycle is still running")
             return True
+
+        max_charge_voltage = None
+        battery_bus = None
+        try:
+            battery_service = find_battery_service()
+            if battery_service:
+                battery_bus = dbusconnection()
+                voltage_item = VeDbusItemImport(
+                    battery_bus, battery_service, '/Info/MaxChargeVoltage',
+                    createsignal=False,
+                )
+                max_charge_voltage = voltage_item.get_value()
+        except Exception:
+            logging.warning("Unable to read BMS charge voltage", exc_info=True)
+        finally:
+            close = getattr(battery_bus, "close", None)
+            if close:
+                close()
+
+        self._poll_in_progress = True
+        self._poll_thread = threading.Thread(
+            target=self._poll_worker,
+            args=(max_charge_voltage,),
+            name=f"mppsolar-poll-{self.serial_number}",
+            daemon=True,
+        )
+        self._poll_thread.start()
+        return True
+
+    def _poll_worker(self, max_charge_voltage):
+        try:
+            result = self._read_PI18(max_charge_voltage)
+        except Exception:
+            GLib.idle_add(self._poll_failed, traceback.format_exc())
+        else:
+            GLib.idle_add(self._poll_succeeded, result)
+
+    def _poll_succeeded(self, result):
+        try:
+            self._apply_PI18(result)
+            self._updateInternal()
+            self._consecutive_errors = 0
+        except Exception:
+            self._poll_in_progress = False
+            return self._poll_failed(traceback.format_exc())
+        self._poll_in_progress = False
+        return False
+
+    def _poll_failed(self, error):
+        global mainloop
+        self._poll_in_progress = False
+        logging.error("Error in asynchronous P18 polling cycle\n%s", error)
+        self._consecutive_errors += 1
+        self._updateInternal()
+        if self._consecutive_errors >= 3:
+            logging.error("Three consecutive polling failures; asking manager to restart device")
+            self.exit_code = 1
+            mainloop.quit()
+        return False
 
     def _change(self, path, value):
         global mainloop
@@ -559,17 +610,12 @@ class DbusMppSolarService(object):
             mainloop.quit()
             return False
 
-    def _update_PI18(self):
-        # Update charge voltage
-
-        battery_service = find_battery_service()
+    def _read_PI18(self, max_charge_voltage):
         generated = data = mode = rated = alerts = {"result": "init", "message": "not initialized"}
 
-        if battery_service:
-            systemMaxChargeVoltage = VeDbusItemImport(dbusconnection(), battery_service, '/Info/MaxChargeVoltage')
-            systemMaxChargeCurrent = VeDbusItemImport(dbusconnection(), battery_service, '/Info/MaxChargeCurrent')
+        if max_charge_voltage is not None:
             try:
-                setMaxChargingVoltage(systemMaxChargeVoltage.get_value(), systemMaxChargeVoltage.get_value())
+                setMaxChargingVoltage(max_charge_voltage, max_charge_voltage)
             except:
                 logging.warning("bulkVoltage and/or floatVoltage not defined.")
         # try:
@@ -599,6 +645,21 @@ class DbusMppSolarService(object):
                 if isinstance(result, dict) and result.get("result") == "error":
                     logging.warning(f"Error in update PI18 loop. {name} → {result.get('message')}")
             raise RuntimeError("P18 polling command failed") from exc
+
+        return {
+            "generated": generated,
+            "data": data,
+            "mode": mode,
+            "rated": rated,
+            "alerts": alerts,
+        }
+
+    def _apply_PI18(self, result):
+        generated = result["generated"]
+        data = result["data"]
+        mode = result["mode"]
+        rated = result["rated"]
+        alerts = result["alerts"]
 
         with self._dbusinverter as i, self._dbusmppt as m:
             # 0=Off;1=Low Power;2=Fault;9=Inverting
@@ -768,8 +829,6 @@ class DbusMppSolarService(object):
             if m['/State'] == 3:
                 m['/History/Overall/TimeInBulk'] += self.poll_interval
 
-        # Execute updates of previously updated values
-        self._updateInternal()
         return True
 
     def _change_PI18(self, path, value):
