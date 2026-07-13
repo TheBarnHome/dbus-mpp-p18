@@ -38,6 +38,7 @@ from mppsolar_common import (
     allocate_instance,
     backend_lock,
     call_with_retries,
+    changed_charge_voltage,
     clamp_poll_interval,
     load_manifest,
     service_suffix,
@@ -150,10 +151,21 @@ def setChargerPriority(priority):
 def setMaxChargingVoltage(bulk, float):
     #MCHGV : Setting bulk and float voltage
     # For PI18 : MCHGV552,540 will set Bulk - CV voltage [480~584] in 0.1V xxx, Float voltage [480~584] in 0.1V
-   try:
-    return runInverterCommands('set-max-charge-voltage', (round(bulk, 1), round(float, 1)))
-   except:
-    logging.warning("Fail to set max charging voltage to {} and {}".format(bulk, float), exc_info=True)
+    try:
+        result = runInverterCommands(
+            'set-max-charge-voltage', (round(bulk, 1), round(float, 1))
+        )
+    except Exception:
+        logging.warning(
+            "Fail to set max charging voltage to %s and %s",
+            bulk,
+            float,
+            exc_info=True,
+        )
+        return False
+    if not isinstance(result, dict) or result.get('result') != 'ok':
+        logging.warning("P18 rejected max charging voltage %s: %r", bulk, result)
+        return False
     return True
 
 def setMaxChargingCurrent(id, current):
@@ -210,6 +222,8 @@ class DbusMppSolarService(object):
         self._poll_source = None
         self._queued_updates = []
         self._last_p18_alerts = None
+        self._last_charge_voltage = None
+        self._charge_voltage_write_count = 0
         self.history_store = HistoryStore(self.serial_number)
         self.history = self.history_store.load()
 
@@ -355,6 +369,8 @@ class DbusMppSolarService(object):
         self._dbusmppt.add_path('/Diagnostics/P18/CurrentHidraw', self.tty)
         self._dbusmppt.add_path('/Diagnostics/P18/BackendPort', port)
         self._dbusmppt.add_path('/Diagnostics/P18/NumberOfChargers', 1)
+        self._dbusmppt.add_path('/Diagnostics/P18/LastAppliedChargeVoltage', 0)
+        self._dbusmppt.add_path('/Diagnostics/P18/ChargeVoltageWriteCount', 0)
         self._dbusinverter.add_path('/Diagnostics/P18/CurrentHidraw', self.tty)
         self._dbusinverter.add_path('/Diagnostics/P18/BackendPort', port)
         self._dbusinverter.add_path(
@@ -633,12 +649,11 @@ class DbusMppSolarService(object):
 
     def _read_PI18(self, max_charge_voltage):
         generated = data = mode = rated = alerts = {"result": "init", "message": "not initialized"}
+        charge_voltage_written = None
 
-        if max_charge_voltage is not None:
-            try:
-                setMaxChargingVoltage(max_charge_voltage, max_charge_voltage)
-            except:
-                logging.warning("bulkVoltage and/or floatVoltage not defined.")
+        charge_voltage = changed_charge_voltage(
+            self._last_charge_voltage, max_charge_voltage
+        )
         # try:
         #     setMaxChargingCurrent(0, systemMaxChargeCurrent.get_value())
         #     setMaxUtilityChargingCurrent(0, systemMaxChargeCurrent.get_value())
@@ -667,12 +682,18 @@ class DbusMppSolarService(object):
                     logging.warning(f"Error in update PI18 loop. {name} → {result.get('message')}")
             raise RuntimeError("P18 polling command failed") from exc
 
+        if charge_voltage is not None and setMaxChargingVoltage(
+            charge_voltage, charge_voltage
+        ):
+            charge_voltage_written = charge_voltage
+
         return {
             "generated": generated,
             "data": data,
             "mode": mode,
             "rated": rated,
             "alerts": alerts,
+            "charge_voltage_written": charge_voltage_written,
         }
 
     def _apply_PI18(self, result):
@@ -681,8 +702,19 @@ class DbusMppSolarService(object):
         mode = result["mode"]
         rated = result["rated"]
         alerts = result["alerts"]
+        charge_voltage_written = result.get("charge_voltage_written")
 
         with self._dbusinverter as i, self._dbusmppt as m:
+            if charge_voltage_written is not None:
+                self._last_charge_voltage = charge_voltage_written
+                self._charge_voltage_write_count += 1
+                m[
+                    '/Diagnostics/P18/LastAppliedChargeVoltage'
+                ] = charge_voltage_written
+                m[
+                    '/Diagnostics/P18/ChargeVoltageWriteCount'
+                ] = self._charge_voltage_write_count
+
             # 0=Off;1=Low Power;2=Fault;9=Inverting
             invMode = mode.get('data', {}).get('mode', i['/State'])
             if invMode == 'Battery mode':

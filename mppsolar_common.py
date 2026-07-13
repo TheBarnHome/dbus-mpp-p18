@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import time
@@ -73,6 +74,25 @@ def call_with_retries(call, attempts: int = 2, retry_delay: float = 0.5, on_retr
                 on_retry(exc, attempt, attempts)
             if retry_delay > 0:
                 time.sleep(retry_delay)
+
+
+def normalize_charge_voltage(value: object) -> float | None:
+    """Return the P18 one-decimal voltage, rejecting missing/non-finite values."""
+    try:
+        voltage = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(voltage):
+        return None
+    return round(voltage, 1)
+
+
+def changed_charge_voltage(previous: float | None, requested: object) -> float | None:
+    """Return a new P18 voltage only when its encoded value has changed."""
+    voltage = normalize_charge_voltage(requested)
+    if voltage is None or voltage == previous:
+        return None
+    return voltage
 
 
 def validate_serial(serial: object) -> str:

@@ -1,4 +1,5 @@
 import json
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,9 +8,11 @@ from mppsolar_common import (
     HistoryStore,
     allocate_instance,
     call_with_retries,
+    changed_charge_voltage,
     clamp_poll_interval,
     count_parallel_members,
     load_manifest,
+    normalize_charge_voltage,
     save_manifest,
     serial_from_response,
     service_suffix,
@@ -52,6 +55,21 @@ class RetryTests(unittest.TestCase):
             call_with_retries(operation, attempts=2, retry_delay=0)
 
         self.assertEqual(calls, [1, 2])
+
+
+class ChargeVoltageTests(unittest.TestCase):
+    def test_voltage_is_normalized_to_p18_precision(self):
+        self.assertEqual(normalize_charge_voltage(55.20000076293945), 55.2)
+        self.assertEqual(normalize_charge_voltage("54.84"), 54.8)
+
+    def test_missing_or_non_finite_voltage_is_rejected(self):
+        for value in (None, "bad", math.nan, math.inf, -math.inf):
+            with self.subTest(value=value):
+                self.assertIsNone(normalize_charge_voltage(value))
+
+    def test_same_encoded_voltage_is_not_reapplied(self):
+        self.assertIsNone(changed_charge_voltage(55.2, 55.20000076293945))
+        self.assertEqual(changed_charge_voltage(55.2, 55.31), 55.3)
 
 
 class IdentityTests(unittest.TestCase):
