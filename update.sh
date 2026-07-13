@@ -108,22 +108,17 @@ stop_services() {
         rm -f "$pidfile"
     done
 
-    # Remove only orphan processes which match this installation and a hidraw
-    # device. This avoids the broad process matching used by install.sh.
-    pids=$(ps | grep -F "$INSTALL_DIR/dbus-mppsolar.py --serial /dev/hidraw" | grep -v grep | awk '{print $1}' || true)
-    for pid in $pids; do
-        kill "$pid" 2>/dev/null || true
-    done
-
-    pids=$(ps | grep -F "$INSTALL_DIR/inverterd --usb-path /dev/hidraw" | grep -v grep | awk '{print $1}' || true)
+    # Venus OS truncates the command column shown by ps. Match short, unique
+    # project paths so orphan Python/inverterd processes and their multilog
+    # consumers are stopped even when the arguments are not fully visible.
+    pids=$(find_project_pids)
     for pid in $pids; do
         kill "$pid" 2>/dev/null || true
     done
 
     sleep 2
 
-    pids=$(ps | grep -F "$INSTALL_DIR/dbus-mppsolar.py --serial /dev/hidraw" | grep -v grep | awk '{print $1}' || true)
-    pids="$pids $(ps | grep -F "$INSTALL_DIR/inverterd --usb-path /dev/hidraw" | grep -v grep | awk '{print $1}' || true)"
+    pids=$(find_project_pids)
     if [ -n "${pids//[[:space:]]/}" ]; then
         log "Forcing the remaining project processes to stop: $pids"
         for pid in $pids; do
@@ -131,13 +126,20 @@ stop_services() {
         done
         sleep 1
 
-        pids=$(ps | grep -F "$INSTALL_DIR/dbus-mppsolar.py --serial /dev/hidraw" | grep -v grep | awk '{print $1}' || true)
-        pids="$pids $(ps | grep -F "$INSTALL_DIR/inverterd --usb-path /dev/hidraw" | grep -v grep | awk '{print $1}' || true)"
+        pids=$(find_project_pids)
         if [ -n "${pids//[[:space:]]/}" ]; then
             log "Unable to stop project processes: $pids"
             return 1
         fi
     fi
+}
+
+find_project_pids() {
+    {
+        ps | grep -F "$INSTALL_DIR/dbus-mppsolar.py" | grep -v grep | awk '{print $1}' || true
+        ps | grep -F "$INSTALL_DIR/inverterd" | grep -v grep | awk '{print $1}' || true
+        ps | grep -F "multilog t s25000 n4 /var/log/dbus-mppsolar." | grep -v grep | awk '{print $1}' || true
+    } | sort -nu
 }
 
 start_services() {
