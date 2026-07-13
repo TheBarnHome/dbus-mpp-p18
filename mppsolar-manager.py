@@ -320,6 +320,31 @@ class MppSolarManager:
             process.kill()
             process.wait(timeout=2)
 
+    @staticmethod
+    def _terminate_processes(processes, timeout):
+        processes = [
+            process for process in processes
+            if process is not None and process.poll() is None
+        ]
+        for process in processes:
+            process.terminate()
+        deadline = time.monotonic() + timeout
+        for process in processes:
+            if process.poll() is not None:
+                continue
+            try:
+                process.wait(timeout=max(0.1, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                pass
+        remaining = [process for process in processes if process.poll() is None]
+        for process in remaining:
+            process.kill()
+        for process in remaining:
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                logging.error("Process %s did not stop after SIGKILL", process.pid)
+
     def _stop_device(self, path, reason):
         record = self.records.pop(path, None)
         if record is None:
@@ -515,8 +540,19 @@ class MppSolarManager:
         return True
 
     def shutdown(self):
-        for path in list(self.records):
-            self._stop_device(path, "manager shutdown")
+        records = list(self.records.values())
+        self.records.clear()
+        for record in records:
+            logging.info(
+                "Stopping serial %s on %s: manager shutdown",
+                record.serial, record.path,
+            )
+        # Signal every driver first so their 10-second socket timeout and
+        # atexit history save run in parallel, then stop their backends.
+        self._terminate_processes((record.driver for record in records), 15)
+        self._terminate_processes((record.backend for record in records), 5)
+        for record in records:
+            record.log_handle.close()
 
 
 def main():

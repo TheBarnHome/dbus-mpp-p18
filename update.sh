@@ -88,7 +88,7 @@ stop_services() {
     log "Stopping dbus-mppsolar services..."
     for pidfile in /var/run/dbus-mppsolar-manager.pid /var/run/dbus-mppsolar.hidraw*.pid; do
         [ -e "$pidfile" ] || continue
-        start-stop-daemon --stop --pidfile "$pidfile" --retry TERM/15/KILL/5 || true
+        start-stop-daemon --stop --pidfile "$pidfile" --retry TERM/25/KILL/5 || true
         rm -f "$pidfile"
     done
     pids=$(find_project_pids)

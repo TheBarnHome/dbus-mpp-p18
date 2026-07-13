@@ -143,6 +143,27 @@ class ManagerScanTests(unittest.TestCase):
         self.assertNotIn("/dev/hidraw0", manager.records)
         manager._start_device.assert_called_once_with("/dev/hidraw3")
 
+    def test_shutdown_stops_all_drivers_before_backends(self):
+        manager = bare_manager()
+        records = []
+        for index in range(2):
+            record = mppsolar_manager.DeviceRecord(
+                f"/dev/hidraw{index}", f"SERIAL{index}", 8400 + index,
+                FakeProcess(), FakeProcess(), FakeLog(), time.monotonic(),
+            )
+            manager.records[record.path] = record
+            records.append(record)
+        manager._terminate_processes = mock.Mock()
+
+        manager.shutdown()
+
+        self.assertEqual(manager.records, {})
+        first_processes = list(manager._terminate_processes.call_args_list[0].args[0])
+        second_processes = list(manager._terminate_processes.call_args_list[1].args[0])
+        self.assertEqual(first_processes, [record.driver for record in records])
+        self.assertEqual(second_processes, [record.backend for record in records])
+        self.assertTrue(all(record.log_handle.closed for record in records))
+
 
 class ManagerTopologyTests(unittest.TestCase):
     def test_each_backend_gets_its_parallel_group_count(self):
