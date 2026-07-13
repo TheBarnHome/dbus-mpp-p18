@@ -239,7 +239,10 @@ class DbusMppSolarService(object):
         self._dbusinverter.add_path('/Ac/Out/L1/I', 0)
         self._dbusinverter.add_path('/Ac/Out/L1/P', 0)
         self._dbusinverter.add_path('/Ac/Out/L1/F', 0)
-        self._dbusinverter.add_path('/Mode', 0)                     #<- Switch position: 2=Inverter on; 4=Off; 5=Low Power/ECO
+        # This service represents the inverter side of an off-grid all-in-one
+        # device. Victron inverter mode only accepts documented switch values;
+        # operating activity is reported separately through /State.
+        self._dbusinverter.add_path('/Mode', 2)                     #<- 2=Inverter only
         self._dbusinverter.add_path('/State', 0)                    #<- 0=Off; 1=Low Power; 2=Fault; 9=Inverting
         self._dbusinverter.add_path('/Temperature', 123)
 
@@ -299,6 +302,10 @@ class DbusMppSolarService(object):
         self._dbusmppt.add_path('/Yield/System', 0)
         self._dbusmppt.add_path('/ErrorCode', 0)
         self._dbusmppt.add_path('/DeviceOffReason', 0)
+        # hass-victron reads these standard alarm registers. Missing D-Bus
+        # paths are exposed by Modbus as 0xffff, which is not a valid alarm.
+        self._dbusmppt.add_path('/Alarms/LowVoltage', 0)
+        self._dbusmppt.add_path('/Alarms/HighVoltage', 0)
         self._dbusmppt.add_path('/State', 0)
         # Victron ChargerMode only accepts 1 (On) or 4 (Off). Charging activity
         # is reported separately through /State and /MppOperationMode.
@@ -528,10 +535,18 @@ class DbusMppSolarService(object):
                 output_circuit_short = is_active('output_circuit_short')
 
                 # Standard com.victronenergy.inverter alarm paths.
-                i['/Alarms/LowVoltage'] = 2 if battery_under else severity(battery_low)
-                i['/Alarms/HighVoltage'] = severity(is_active('battery_voltage_high'))
+                low_voltage_alarm = 2 if battery_under else severity(battery_low)
+                high_voltage_alarm = severity(is_active('battery_voltage_high'))
+                i['/Alarms/LowVoltage'] = low_voltage_alarm
+                i['/Alarms/HighVoltage'] = high_voltage_alarm
                 i['/Alarms/HighTemperature'] = severity(is_active('inverter_over_temperature'))
                 i['/Alarms/Overload'] = 2 if output_circuit_short else severity(is_active('over_load'))
+
+                # The solar-charger Modbus map exposes the same battery-voltage
+                # alarm state. Always publish 0/1/2 so Home Assistant never sees
+                # the 0xffff sentinel used for a missing D-Bus path.
+                m['/Alarms/LowVoltage'] = low_voltage_alarm
+                m['/Alarms/HighVoltage'] = high_voltage_alarm
 
                 # Preserve the complete P18 diagnosis without turning the
                 # expected off-grid LineFail flag into a Venus alarm.
