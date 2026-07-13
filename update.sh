@@ -77,6 +77,7 @@ for name in bus.list_names():
         )))
 ' 2>/dev/null || true
         ps | grep -F "$INSTALL_DIR/mppsolar-manager.py" | grep -v grep | awk '{print $1}' || true
+        ps | grep -F "$INSTALL_DIR/mppsolar-supervisor.py" | grep -v grep | awk '{print $1}' || true
         ps | grep -F "$INSTALL_DIR/dbus-mppsolar.py" | grep -v grep | awk '{print $1}' || true
         ps | grep -F "$INSTALL_DIR/inverterd" | grep -v grep | awk '{print $1}' || true
         ps | grep -F "multilog t s25000 n4 /var/log/dbus-mppsolar" | grep -v grep | awk '{print $1}' || true
@@ -113,6 +114,7 @@ set_runtime_permissions() {
     chmod +x \
         "$INSTALL_DIR/dbus-mppsolar.py" \
         "$INSTALL_DIR/mppsolar-manager.py" \
+        "$INSTALL_DIR/mppsolar-supervisor.py" \
         "$INSTALL_DIR/migrate-config.py" \
         "$INSTALL_DIR/verify-runtime.py" \
         "$INSTALL_DIR/inverterd" \
@@ -181,6 +183,7 @@ validate_installation() {
     python3 -m py_compile \
         "$INSTALL_DIR/dbus-mppsolar.py" \
         "$INSTALL_DIR/mppsolar-manager.py" \
+        "$INSTALL_DIR/mppsolar-supervisor.py" \
         "$INSTALL_DIR/mppsolar_common.py" \
         "$INSTALL_DIR/migrate-config.py" \
         "$INSTALL_DIR/verify-runtime.py" \

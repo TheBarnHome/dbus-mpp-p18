@@ -61,7 +61,8 @@ git clone --recurse-submodules https://github.com/TheBarnHome/dbus-mpp-p18 /data
 
 ## 🧩 Automatic discovery and configuration
 
-No `config.json` is required. `mppsolar-manager.py` scans `/dev/hidraw*` every two
+No `config.json` is required. A lightweight supervisor keeps
+`mppsolar-manager.py` running with bounded restart backoff. The manager scans `/dev/hidraw*` every two
 seconds, accepts only protocol 18 devices with a valid unique serial number, and
 automatically adds/removes them. The P18 serial is the permanent identity, so a
 USB reorder from `hidraw0` to `hidraw1` does not change the name, Device Instance,

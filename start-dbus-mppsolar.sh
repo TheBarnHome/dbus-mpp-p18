@@ -3,7 +3,7 @@
 set -eu
 
 INSTALL_DIR="${INSTALL_DIR:-/data/etc/dbus-mppsolar}"
-APP="$INSTALL_DIR/mppsolar-manager.py"
+APP="$INSTALL_DIR/mppsolar-supervisor.py"
 PIDFILE="${PIDFILE:-/var/run/dbus-mppsolar-manager.pid}"
 LOGDIR="${LOGDIR:-/var/log/dbus-mppsolar-manager}"
 
@@ -16,7 +16,7 @@ if [ -f "$PIDFILE" ]; then
 fi
 
 mkdir -p "$LOGDIR"
-echo "UTC-$(date -u +%Y.%m.%d-%H:%M:%S) Starting mppsolar-manager.py"
+echo "UTC-$(date -u +%Y.%m.%d-%H:%M:%S) Starting mppsolar-supervisor.py"
 
 exec start-stop-daemon --start --background \
     --make-pidfile --pidfile "$PIDFILE" \
