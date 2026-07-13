@@ -4,7 +4,8 @@
 from __future__ import annotations
 
 import argparse
-import signal
+import json
+import subprocess
 import sys
 
 import dbus
@@ -22,19 +23,37 @@ class ReadTimeout(RuntimeError):
     pass
 
 
-def _alarm(signum, frame):
-    raise ReadTimeout("D-Bus read timed out")
+DBUS_READ_SCRIPT = r'''
+import dbus
+import json
+import sys
+
+bus = dbus.SystemBus()
+value = bus.get_object(sys.argv[1], sys.argv[2]).GetValue(
+    dbus_interface="com.victronenergy.BusItem"
+)
+if not isinstance(value, (str, int, float, bool, list, dict)):
+    value = str(value)
+print(json.dumps(value))
+'''
 
 
-def read_value(bus, service, path, timeout=8):
-    previous = signal.signal(signal.SIGALRM, _alarm)
-    signal.alarm(timeout)
+def read_value(bus, service, path, timeout=12):
     try:
-        obj = bus.get_object(service, path)
-        return obj.GetValue(dbus_interface="com.victronenergy.BusItem")
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, previous)
+        result = subprocess.run(
+            [sys.executable, "-c", DBUS_READ_SCRIPT, service, path],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        return json.loads(result.stdout)
+    except subprocess.TimeoutExpired as exc:
+        raise ReadTimeout(f"D-Bus read timed out: {service} {path}") from exc
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"D-Bus read failed: {service} {path}: {exc.stderr.strip()}"
+        ) from exc
 
 
 def verify(require_migrated=False):
