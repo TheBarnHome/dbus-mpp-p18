@@ -34,6 +34,7 @@ from mppsolar_common import (
     HistoryStore,
     POLL_DEFAULT,
     allocate_instance,
+    backend_lock,
     clamp_poll_interval,
     load_manifest,
     service_suffix,
@@ -72,16 +73,17 @@ def safe_runInverterCommands(command: str, params: tuple = (), timeout_sec: int 
     global host
     global output_format
 
-    c = Client(port, host)
-    c.sock.settimeout(timeout_sec)
-    c.connect()
-    c.format(output_format)
-    
-    # Exécution avec ou sans paramètres selon que le tuple est vide ou non
-    if params:
-        output = c.exec(command, params)
-    else:
-        output = c.exec(command)
+    with backend_lock(port):
+        c = Client(port, host)
+        c.sock.settimeout(timeout_sec)
+        c.connect()
+        c.format(output_format)
+
+        # Exécution avec ou sans paramètres selon que le tuple est vide ou non
+        if params:
+            output = c.exec(command, params)
+        else:
+            output = c.exec(command)
 
     parsed = json.loads(output)
 

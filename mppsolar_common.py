@@ -7,6 +7,8 @@ import json
 import os
 import re
 import time
+import fcntl
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -21,6 +23,9 @@ POLL_MAX = 60
 POLL_DEFAULT = 10
 INSTANCE_MIN = 1
 INSTANCE_MAX = 255
+BACKEND_LOCK_DIR = Path(
+    os.environ.get("DBUS_MPP_LOCK_DIR", str(STATE_DIR / "locks"))
+)
 
 HISTORY_PATHS = (
     "/Yield/User",
@@ -40,6 +45,19 @@ HISTORY_PATHS = (
     "/History/Overall/LastError3",
     "/History/Overall/LastError4",
 )
+
+
+@contextmanager
+def backend_lock(port: int):
+    """Serialize all clients talking to the same inverterd backend."""
+    BACKEND_LOCK_DIR.mkdir(parents=True, exist_ok=True)
+    lock_path = BACKEND_LOCK_DIR / f"backend-{int(port)}.lock"
+    with lock_path.open("a+") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def validate_serial(serial: object) -> str:

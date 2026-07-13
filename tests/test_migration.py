@@ -4,6 +4,7 @@ import sys
 import tempfile
 import types
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from unittest import mock
 
@@ -29,6 +30,7 @@ class MigrationTests(unittest.TestCase):
         second.sock = mock.Mock()
         second.exec.return_value = '{"result":"ok","data":{"sn":"SERIAL1"}}'
         with mock.patch.object(migrate_config, "Client", side_effect=[first, second]), \
+                mock.patch.object(migrate_config, "backend_lock", return_value=nullcontext()), \
                 mock.patch.object(migrate_config.time, "sleep"):
             result = migrate_config.command(8306, "get-serial-number", attempts=2)
         self.assertEqual(result["data"]["sn"], "SERIAL1")

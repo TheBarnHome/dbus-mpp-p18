@@ -20,6 +20,7 @@ from mppsolar_common import (
     HistoryStore,
     LEGACY_CONFIG_PATH,
     MANIFEST_PATH,
+    backend_lock,
     clamp_poll_interval,
     save_manifest,
     serial_from_response,
@@ -30,11 +31,12 @@ def command(port, name, attempts=5):
     last_error = None
     for attempt in range(attempts):
         try:
-            client = Client(port, "127.0.0.1")
-            client.sock.settimeout(10)
-            client.connect()
-            client.format(Format.JSON)
-            return json.loads(client.exec(name))
+            with backend_lock(port):
+                client = Client(port, "127.0.0.1")
+                client.sock.settimeout(10)
+                client.connect()
+                client.format(Format.JSON)
+                return json.loads(client.exec(name))
         except Exception as exc:
             last_error = exc
             if attempt + 1 < attempts:

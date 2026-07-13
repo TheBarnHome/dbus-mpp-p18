@@ -27,6 +27,7 @@ from mppsolar_common import (
     INSTALL_DIR,
     POLL_DEFAULT,
     allocate_instance,
+    backend_lock,
     clamp_poll_interval,
     count_parallel_members,
     load_manifest,
@@ -67,11 +68,12 @@ def dbusconnection():
 
 
 def exec_command(port: int, command: str, params: tuple = ()) -> dict:
-    client = Client(port, "127.0.0.1")
-    client.sock.settimeout(4)
-    client.connect()
-    client.format(Format.JSON)
-    output = client.exec(command, params) if params else client.exec(command)
+    with backend_lock(port):
+        client = Client(port, "127.0.0.1")
+        client.sock.settimeout(4)
+        client.connect()
+        client.format(Format.JSON)
+        output = client.exec(command, params) if params else client.exec(command)
     return json.loads(output)
 
 
@@ -404,47 +406,45 @@ class MppSolarManager:
             counts[serial] = count_parallel_members(responses, fallback)
         return counts
 
-    @staticmethod
-    def _publish_topology_count(serial, count):
+    def _publish_topology_count(self, serial, count):
         service = (
             "com.victronenergy.inverter.mppsolar-inverter."
             + service_suffix(serial)
         )
-        for attempt in range(3):
-            bus = dbusconnection()
-            try:
-                item = bus.get_object(
-                    service, "/Diagnostics/P18/NumberOfChargers"
-                )
-                item.SetValue(
-                    dbus.Int32(count),
-                    dbus_interface="com.victronenergy.BusItem",
-                    timeout=5,
-                )
-                return True
-            except Exception:
-                if attempt < 2:
-                    time.sleep(1)
-            finally:
-                close = getattr(bus, "close", None)
-                if close:
-                    close()
-        logging.warning("Unable to publish topology for %s", serial)
+        try:
+            item = self.bus.get_object(
+                service, "/Diagnostics/P18/NumberOfChargers"
+            )
+            item.SetValue(
+                dbus.Int32(count),
+                dbus_interface="com.victronenergy.BusItem",
+                timeout=5,
+                reply_handler=lambda *args: None,
+                error_handler=lambda error: self._topology_publish_failed(
+                    serial, count, error
+                ),
+            )
+        except Exception as exc:
+            self._topology_publish_failed(serial, count, exc)
+
+    def _topology_publish_failed(self, serial, count, error):
+        logging.warning("Unable to publish topology for %s: %s", serial, error)
+        GLib.timeout_add_seconds(5, self._retry_topology_publish, serial, count)
+
+    def _retry_topology_publish(self, serial, count):
+        if any(record.serial == serial for record in self.records.values()):
+            self._publish_topology_count(serial, count)
         return False
 
     def _topology_worker(self, snapshot):
         try:
             counts = self._calculate_topology(snapshot)
-            published = {
-                serial: self._publish_topology_count(serial, count)
-                for serial, count in counts.items()
-            }
-            GLib.idle_add(self._apply_topology, snapshot, counts, published)
+            GLib.idle_add(self._apply_topology, snapshot, counts)
         except Exception:
             logging.exception("Unable to calculate parallel topology")
-            GLib.idle_add(self._apply_topology, snapshot, {}, {})
+            GLib.idle_add(self._apply_topology, snapshot, {})
 
-    def _apply_topology(self, snapshot, counts, published):
+    def _apply_topology(self, snapshot, counts):
         self._topology_running = False
         current = frozenset(record.serial for record in self.records.values())
         snapshot_serials = frozenset(serial for serial, _ in snapshot)
@@ -455,12 +455,10 @@ class MppSolarManager:
                 for serial in current
             }
             self._last_topology = current
-            retry_interval = (
-                TOPOLOGY_INTERVAL if all(published.get(serial, False) for serial in current)
-                else 5
-            )
-            self._next_topology_refresh = time.monotonic() + retry_interval
+            self._next_topology_refresh = time.monotonic() + TOPOLOGY_INTERVAL
             self._update_service()
+            for serial, count in self._topology_counts.items():
+                self._publish_topology_count(serial, count)
         else:
             self._next_topology_refresh = 0.0
         return False
