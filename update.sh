@@ -20,6 +20,7 @@ QML_TARGET="/opt/victronenergy/gui/qml/PageDeviceInfo.qml"
 UDEV_RULE="/etc/udev/rules.d/99-mppsolar.rules"
 INIT_SCRIPT="/etc/init.d/scan-hidraw.sh"
 RCS_LINK="/etc/rcS.d/S99scan-hidraw"
+UPDATE_SOURCE_DIR="${DBUS_MPP_UPDATE_SOURCE_DIR:-$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)}"
 
 log() { printf '%s\n' "$*"; }
 
@@ -47,6 +48,7 @@ if [ "${DBUS_MPP_UPDATE_FROM_COPY:-0}" != "1" ]; then
     chmod 700 "$updater_copy"
     export DBUS_MPP_UPDATE_FROM_COPY=1
     export DBUS_MPP_UPDATE_COPY="$updater_copy"
+    export DBUS_MPP_UPDATE_SOURCE_DIR="$UPDATE_SOURCE_DIR"
     exec "$updater_copy" "$@"
 fi
 
@@ -107,7 +109,9 @@ set_runtime_permissions() {
 }
 
 list_expected_serials() {
-    DBUS_MPP_STATE_DIR="$STATE_DIR" DBUS_MPP_MANIFEST="$STATE_DIR/devices.json" \
+    PYTHONPATH="$UPDATE_SOURCE_DIR${PYTHONPATH:+:$PYTHONPATH}" \
+        DBUS_MPP_INSTALL_DIR="$INSTALL_DIR" DBUS_MPP_STATE_DIR="$STATE_DIR" \
+        DBUS_MPP_MANIFEST="$STATE_DIR/devices.json" \
         python3 -c 'from mppsolar_common import load_manifest; print(" ".join(sorted(load_manifest())))'
 }
 
@@ -300,7 +304,10 @@ backup_system_integration
 
 if [ "$NO_RESTART" -eq 0 ] && [ -f config.json ]; then
     log "Migrating legacy configuration and live D-Bus history before shutdown..."
-    python3 "$INSTALL_DIR/migrate-config.py"
+    PYTHONPATH="$UPDATE_SOURCE_DIR:$INSTALL_DIR/velib_python${PYTHONPATH:+:$PYTHONPATH}" \
+        DBUS_MPP_INSTALL_DIR="$INSTALL_DIR" DBUS_MPP_STATE_DIR="$STATE_DIR" \
+        DBUS_MPP_MANIFEST="$STATE_DIR/devices.json" \
+        python3 "$UPDATE_SOURCE_DIR/migrate-config.py" --config "$INSTALL_DIR/config.json"
 fi
 if [ "$NO_RESTART" -eq 0 ]; then
     EXPECTED_SERIALS=$(list_expected_serials)
