@@ -1,25 +1,14 @@
 #!/bin/sh
 ### BEGIN INIT INFO
-# Provides:          scan-hidraw
+# Provides:          dbus-mppsolar-manager
 # Required-Start:    $local_fs
 # Default-Start:     S
-# Short-Description: Scan and start dbus-mppsolar for hidraw devices
+# Short-Description: Start the MPP Solar P18 hotplug manager
 ### END INIT INFO
 
-START_SCRIPT="/data/etc/dbus-mppsolar/start-dbus-mppsolar.sh"
+set -eu
 
-echo "Starting HIDRAW device scan..."
+START_SCRIPT="${INSTALL_DIR:-/data/etc/dbus-mppsolar}/start-dbus-mppsolar.sh"
 
-for dev in /dev/hidraw*; do
-  [ -e "$dev" ] || continue
-
-  devname=$(basename "$dev")
-  pidfile="/var/run/dbus-mppsolar.$devname.pid"
-
-  if [ ! -f "$pidfile" ]; then
-    echo "Launching dbus-mppsolar for $devname"
-    $START_SCRIPT "$devname" &
-  else
-    echo "Already running: $devname"
-  fi
-done
+echo "Starting MPP Solar hotplug manager..."
+exec "$START_SCRIPT"

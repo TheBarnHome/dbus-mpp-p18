@@ -5,7 +5,7 @@ Handle automatic connection with MPP Solar inverter compatible device (VEVOR)
 This will output 2 dbus services, one for Inverter data another one for control
 via VRM of the features.
 """
-VERSION = 'v0.2' 
+VERSION = 'v0.3'
 
 from gi.repository import GLib
 import platform
@@ -18,10 +18,9 @@ from enum import Enum
 import datetime
 import dbus
 import dbus.service
-import subprocess
 import time
 import atexit
-import concurrent.futures
+import signal
 from inverterd import Client, Format
 
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
@@ -29,8 +28,20 @@ logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s -
 # our own packages
 sys.path.insert(1, os.path.join(os.path.dirname(__file__), 'velib_python'))
 from vedbus import VeDbusService, VeDbusItemExport, VeDbusItemImport
+from settingsdevice import SettingsDevice
+from mppsolar_common import (
+    HISTORY_PATHS,
+    HistoryStore,
+    POLL_DEFAULT,
+    allocate_instance,
+    clamp_poll_interval,
+    count_parallel_members,
+    load_manifest,
+    service_suffix,
+    settings_prefix,
+    validate_serial,
+)
 
-process = None
 port = None
 host = '127.0.0.1'
 usb_path = ''
@@ -47,27 +58,8 @@ maxPVVoltage = None
 
 numberOfChargers = 1
 
-def start_inverterd(usb_path: str):
-    global process
-    global port
-
-    process = subprocess.Popen(
-        ['/data/etc/dbus-mppsolar/inverterd', '--usb-path', usb_path, '--port', str(port), '--delay 1000'],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
-    )
-    return process
-
-def stop_inverterd():
-    if process:
-        process.terminate()
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-
 # Inverter commands to read from the serial
-def safe_runInverterCommands(command: str, params: tuple = ()):
+def safe_runInverterCommands(command: str, params: tuple = (), timeout_sec: int = 10):
     """
     Exécute une commande sur l'onduleur via la librairie inverterd.
 
@@ -82,6 +74,7 @@ def safe_runInverterCommands(command: str, params: tuple = ()):
     global output_format
 
     c = Client(port, host)
+    c.sock.settimeout(timeout_sec)
     c.connect()
     c.format(output_format)
     
@@ -97,22 +90,14 @@ def safe_runInverterCommands(command: str, params: tuple = ()):
 
 def runInverterCommands(command: str, params: tuple = (), timeout_sec: int = 10):
     """
-    Exécute la commande inverter avec surveillance du timeout.
-    Si inverterd ne répond pas, il est redémarré automatiquement.
+    Exécute une commande avec un timeout fini. Le manager redémarre la paire
+    driver/inverterd si le backend ne répond plus.
     """
-    global usb_path
-
-    while True:
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(safe_runInverterCommands, command, params)
-            try:
-                return future.result(timeout=timeout_sec)
-            except concurrent.futures.TimeoutError:
-                logging.warning(f"[ERROR] inverterd is not responding to '{command}', restarting...")
-                stop_inverterd()
-                time.sleep(3)
-                start_inverterd(usb_path)
-                time.sleep(3)  # Laisse un peu de temps au process pour redémarrer
+    try:
+        return safe_runInverterCommands(command, params, timeout_sec)
+    except TimeoutError:
+        logging.error("inverterd timed out while running %s", command)
+        raise
 
 def find_battery_service():
     bus = dbus.SystemBus()
@@ -184,54 +169,66 @@ def dbusconnection():
     return SessionBus() if 'DBUS_SESSION_BUS_ADDRESS' in os.environ else SystemBus()
 
 class DbusMppSolarService(object):
-    def __init__(self, tty, deviceinstance, productname='MPPSolar', connection='MPPSolar interface', json_file_path='/data/etc/dbus-mppsolar/config.json'):
+    def __init__(self, tty, serial_number, backend_port, connection='MPP Solar P18'):
         global numberOfChargers
         global port
         global usb_path
 
+        self.tty = tty
+        self.serial_number = validate_serial(serial_number)
+        self._initializing = True
+        self.settings_base = settings_prefix(self.serial_number)
+        self._restart_requested = False
+        self.exit_code = 0
+        self._consecutive_errors = 0
+        self._poll_source = None
         self._queued_updates = []
         self._last_p18_alerts = None
-        
-        # For production history
-        energyProductionDays = int(1)
-        currentDay = 0
-        minBatteryVoltage = 100.0
-        maxBatteryVoltage = 0
-        maxBatteryCurrent = 0
-        maxPVPower = 0
-        maxPVVoltage = 0
+        self.history_store = HistoryStore(self.serial_number)
+        self.history = self.history_store.load()
 
-        # Get the name from config file if available
-        if os.path.exists(json_file_path):
-            with open(json_file_path, 'r') as json_file:
-                config = json.load(json_file)
-            if tty in config:
-                deviceinstance = config[tty].get('deviceinstance', 0)
-                productname_value = config[tty].get('productname', None)
-                self.updateInterval = config[tty].get('updateInterval', 10000)
-                if productname_value is not None:
-                    productname = productname_value
-                    logging.info("Product named from config : {}".format(productname_value))
-                numberOfChargers = config[tty].get('numberOfChargers', 1)
+        port = int(backend_port)
+        usb_path = tty
+        if not os.path.exists(usb_path):
+            raise RuntimeError(f"Inverter not connected on {tty}")
 
-                port = 8305 + deviceinstance
-                usb_path = tty
-                start_inverterd(usb_path)
+        manifest = load_manifest()
+        saved = manifest.get(self.serial_number, {})
+        preferred_instance = int(saved.get('device_instance', 0) or 0)
+        used_instances = self._used_device_instances()
+        deviceinstance = allocate_instance(used_instances, preferred_instance)
+        default_name = str(saved.get('custom_name') or f"MPP Solar {self.serial_number[-6:]}")[:32]
+        default_poll = clamp_poll_interval(saved.get('poll_interval', POLL_DEFAULT))
+        bus = dbusconnection()
+        self._settings = SettingsDevice(
+            bus=bus,
+            supportedSettings={
+                'custom_name': [f'{self.settings_base}/CustomName', default_name, 0, 0],
+                'device_instance': [f'{self.settings_base}/DeviceInstance', deviceinstance, 1, 255],
+                'poll_interval': [f'{self.settings_base}/PollInterval', default_poll, 5, 60],
+            },
+            eventCallback=self._setting_changed,
+        )
+        deviceinstance = int(self._settings['device_instance'])
+        if deviceinstance in used_instances:
+            deviceinstance = allocate_instance(used_instances)
+            self._settings['device_instance'] = deviceinstance
+        self.custom_name = str(self._settings['custom_name'])[:32]
+        self.poll_interval = clamp_poll_interval(self._settings['poll_interval'])
 
-        if not os.path.exists("{}".format(usb_path)):
-            logging.warning("Inverter not connected on {}".format(tty))
-            sys.exit()
-
-        logging.info(f"Connected to inverter on {tty}, setting up dbus with /DeviceInstance = {deviceinstance}")
+        logging.info(
+            "Connected serial %s on %s, port %s, DeviceInstance %s",
+            self.serial_number, tty, port, deviceinstance,
+        )
         
         # Create the services
-        hidraw = tty.strip('/dev/')
-        self._dbusinverter = VeDbusService(f'com.victronenergy.inverter.mppsolar-inverter.{hidraw}', bus=dbusconnection(), register=False)
-        self._dbusmppt = VeDbusService(f'com.victronenergy.solarcharger.mppsolar-charger.{hidraw}', bus=dbusconnection(), register=False)
+        suffix = service_suffix(self.serial_number)
+        self._dbusinverter = VeDbusService(f'com.victronenergy.inverter.mppsolar-inverter.{suffix}', bus=bus, register=False)
+        self._dbusmppt = VeDbusService(f'com.victronenergy.solarcharger.mppsolar-charger.{suffix}', bus=bus, register=False)
 
         # Set up default paths
-        self.setupInverterDefaultPaths(self._dbusinverter, connection, deviceinstance, f"Inverter {productname}")
-        self.setupChargerDefaultPaths(self._dbusmppt, connection, deviceinstance, f"Charger {productname}")
+        self.setupInverterDefaultPaths(self._dbusinverter, connection, deviceinstance, "MPP Solar Inverter")
+        self.setupChargerDefaultPaths(self._dbusmppt, connection, deviceinstance, "MPP Solar Charger")
 
         # Create paths for inverter
         self._dbusinverter.add_path('/Dc/0/Voltage', 0)
@@ -298,8 +295,8 @@ class DbusMppSolarService(object):
         self._dbusmppt.add_path('/Settings/BmsPresent', None)
         self._dbusmppt.add_path('/Settings/ChargeCurrentLimit', 80)
         # other paths
-        self._dbusmppt.add_path('/Yield/User', 0)
-        self._dbusmppt.add_path('/Yield/System', 0)
+        self._dbusmppt.add_path('/Yield/User', self.history.get('/Yield/User', 0))
+        self._dbusmppt.add_path('/Yield/System', self.history.get('/Yield/System', 0))
         self._dbusmppt.add_path('/ErrorCode', 0)
         self._dbusmppt.add_path('/DeviceOffReason', 0)
         # hass-victron reads these standard alarm registers. Missing D-Bus
@@ -321,25 +318,24 @@ class DbusMppSolarService(object):
         self._dbusmppt.add_path('/Diagnostics/P18/Mppt2OverloadWarning', 0)
         self._dbusmppt.add_path('/Diagnostics/P18/BatteryTooLowToChargeForScc1', 0)
         self._dbusmppt.add_path('/Diagnostics/P18/BatteryTooLowToChargeForScc2', 0)
+        self._dbusmppt.add_path('/Diagnostics/P18/CurrentHidraw', self.tty)
+        self._dbusmppt.add_path('/Diagnostics/P18/BackendPort', port)
+        self._dbusmppt.add_path('/Diagnostics/P18/NumberOfChargers', 1)
+        self._dbusinverter.add_path('/Diagnostics/P18/CurrentHidraw', self.tty)
+        self._dbusinverter.add_path('/Diagnostics/P18/BackendPort', port)
+        self._dbusinverter.add_path('/Diagnostics/P18/NumberOfChargers', 1)
+        self._dbusinverter.add_path(
+            '/Diagnostics/P18/RefreshTopology', 0, writeable=True,
+            onchangecallback=self._change_refresh_topology,
+        )
         
         # history
         self._dbusmppt.add_path('/History/Overall/DaysAvailable', 1)
 
         # history daily
-        self._dbusmppt.add_path("/History/Overall/Yield", 0)
-        self._dbusmppt.add_path("/History/Overall/Consumption", 0)
-        self._dbusmppt.add_path("/History/Overall/MaxPower", 0)
-        self._dbusmppt.add_path("/History/Overall/MaxPvVoltage", 0)
-        self._dbusmppt.add_path("/History/Overall/MinBatteryVoltage", 0)
-        self._dbusmppt.add_path("/History/Overall/MaxBatteryVoltage", 0)
-        self._dbusmppt.add_path("/History/Overall/MaxBatteryCurrent", 0)
-        self._dbusmppt.add_path("/History/Overall/TimeInBulk", 0)
-        self._dbusmppt.add_path("/History/Overall/TimeInAbsorption", 0)
-        self._dbusmppt.add_path("/History/Overall/TimeInFloat", 0)
-        self._dbusmppt.add_path("/History/Overall/LastError1", 0)
-        self._dbusmppt.add_path("/History/Overall/LastError2", 0)
-        self._dbusmppt.add_path("/History/Overall/LastError3", 0)
-        self._dbusmppt.add_path("/History/Overall/LastError4", 0)
+        for history_path in HISTORY_PATHS:
+            if history_path.startswith('/History/'):
+                self._dbusmppt.add_path(history_path, self.history.get(history_path, 0))
 
             
         # self._dbusmppt.add_path('/History/Overall/MaxPvVoltage', 0)
@@ -354,7 +350,133 @@ class DbusMppSolarService(object):
         logging.info(f'Added to D-Bus: {self._dbusinverter}')
         logging.info(f'Added to D-Bus: {self._dbusmppt}')
 
-        GLib.timeout_add(self.updateInterval, self._update)
+        self._schedule_poll()
+        GLib.timeout_add_seconds(60, self._refresh_parallel_count)
+        GLib.timeout_add_seconds(300, self._save_history)
+        self._refresh_parallel_count()
+        self._initializing = False
+
+    def _used_device_instances(self):
+        used = set()
+        try:
+            bus = dbusconnection()
+            for name in bus.list_names():
+                if not (
+                    name.startswith('com.victronenergy.inverter.')
+                    or name.startswith('com.victronenergy.solarcharger.')
+                ):
+                    continue
+                if name.endswith(service_suffix(self.serial_number)):
+                    continue
+                value = VeDbusItemImport(bus, name, '/DeviceInstance').get_value()
+                if value is not None:
+                    used.add(int(value))
+        except Exception:
+            logging.warning("Unable to enumerate used Device Instances", exc_info=True)
+        return used
+
+    def _schedule_poll(self):
+        if self._poll_source is not None:
+            GLib.source_remove(self._poll_source)
+        self._poll_source = GLib.timeout_add_seconds(self.poll_interval, self._update)
+
+    def _setting_changed(self, setting, oldvalue, newvalue):
+        if setting == 'custom_name':
+            self.custom_name = str(newvalue)[:32]
+            if hasattr(self, '_dbusinverter'):
+                self._dbusinverter['/CustomName'] = self.custom_name
+                self._dbusmppt['/CustomName'] = self.custom_name
+        elif setting == 'poll_interval':
+            self.poll_interval = clamp_poll_interval(newvalue)
+            if hasattr(self, '_dbusinverter'):
+                self._dbusinverter['/Settings/PollInterval'] = self.poll_interval
+                self._dbusmppt['/Settings/PollInterval'] = self.poll_interval
+                self._schedule_poll()
+        elif setting == 'device_instance':
+            new_instance = int(newvalue)
+            if new_instance in self._used_device_instances():
+                logging.error("Rejecting conflicting Device Instance %s", new_instance)
+                if oldvalue is not None and int(oldvalue) != new_instance:
+                    GLib.idle_add(self._restore_device_instance, int(oldvalue))
+                return
+            if hasattr(self, '_dbusinverter'):
+                self._dbusinverter['/Settings/DeviceInstance'] = new_instance
+                self._dbusmppt['/Settings/DeviceInstance'] = new_instance
+                if not self._initializing:
+                    self._request_restart()
+
+    def _restore_device_instance(self, value):
+        self._settings['device_instance'] = int(value)
+        return False
+
+    def _request_restart(self):
+        global mainloop
+        self._restart_requested = True
+        self.exit_code = 75
+        GLib.idle_add(mainloop.quit)
+
+    def _change_custom_name(self, path, value):
+        value = str(value)[:32]
+        self._settings['custom_name'] = value
+        return True
+
+    def _change_poll_interval(self, path, value):
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            return False
+        if not 5 <= value <= 60:
+            return False
+        self._settings['poll_interval'] = value
+        return True
+
+    def _change_device_instance(self, path, value):
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            return False
+        current = int(self._settings['device_instance'])
+        if value == current:
+            return True
+        if not 1 <= value <= 255 or value in self._used_device_instances():
+            logging.warning("Device Instance %s is invalid or already in use", value)
+            return False
+        self._settings['device_instance'] = value
+        return True
+
+    def _change_refresh_topology(self, path, value):
+        GLib.idle_add(self._refresh_parallel_count)
+        return True
+
+    def _refresh_parallel_count(self):
+        global numberOfChargers
+        responses = []
+        for parallel_id in range(7):
+            try:
+                responses.append(runInverterCommands('get-p-rated', (parallel_id,), timeout_sec=4))
+            except Exception:
+                continue
+        fallback = 1
+        try:
+            names = dbusconnection().list_names()
+            fallback = len([name for name in names if name.startswith('com.victronenergy.inverter.mppsolar-inverter.sn_')])
+        except Exception:
+            pass
+        numberOfChargers = count_parallel_members(responses, fallback)
+        self._dbusinverter['/Diagnostics/P18/NumberOfChargers'] = numberOfChargers
+        self._dbusmppt['/Diagnostics/P18/NumberOfChargers'] = numberOfChargers
+        return True
+
+    def _save_history(self):
+        if hasattr(self, '_dbusmppt'):
+            self.history_store.save({path: self._dbusmppt[path] for path in HISTORY_PATHS})
+        return True
+
+    def shutdown(self):
+        try:
+            self._save_history()
+        except Exception:
+            logging.exception("Unable to persist history during shutdown")
     
     def setupInverterDefaultPaths(self, service, connection, deviceinstance, productname):
         # Create the management objects, as specified in the ccgx dbus-api document
@@ -364,6 +486,10 @@ class DbusMppSolarService(object):
 
         # Create the mandatory objects
         service.add_path('/DeviceInstance', deviceinstance)
+        service.add_path('/Serial', self.serial_number)
+        service.add_path('/CustomName', self.custom_name, writeable=True, onchangecallback=self._change_custom_name)
+        service.add_path('/Settings/PollInterval', self.poll_interval, writeable=True, onchangecallback=self._change_poll_interval)
+        service.add_path('/Settings/DeviceInstance', deviceinstance, writeable=True, onchangecallback=self._change_device_instance)
         service.add_path('/ProductId', None)
         service.add_path('/ProductName', productname)
         service.add_path('/FirmwareVersion', None)
@@ -383,6 +509,10 @@ class DbusMppSolarService(object):
 
         # Create the mandatory objects
         service.add_path('/DeviceInstance', deviceinstance)
+        service.add_path('/Serial', self.serial_number)
+        service.add_path('/CustomName', self.custom_name, writeable=True, onchangecallback=self._change_custom_name)
+        service.add_path('/Settings/PollInterval', self.poll_interval, writeable=True, onchangecallback=self._change_poll_interval)
+        service.add_path('/Settings/DeviceInstance', deviceinstance, writeable=True, onchangecallback=self._change_device_instance)
         service.add_path('/ProductId', None)
         service.add_path('/ProductName', productname)
         service.add_path('/FirmwareVersion', None)
@@ -405,12 +535,19 @@ class DbusMppSolarService(object):
     def _update(self):
         global mainloop
         logging.info("{} updating".format(datetime.datetime.now().time()))
-        try: 
-            return self._update_PI18()
-        except:
+        try:
+            result = self._update_PI18()
+            self._consecutive_errors = 0
+            return result
+        except Exception:
             logging.exception('Error in update loop', exc_info=True)
-            # mainloop.quit()
+            self._consecutive_errors += 1
             self._updateInternal()
+            if self._consecutive_errors >= 3:
+                logging.error("Three consecutive polling failures; asking manager to restart device")
+                self.exit_code = 1
+                mainloop.quit()
+                return False
             return True
 
     def _change(self, path, value):
@@ -422,7 +559,7 @@ class DbusMppSolarService(object):
             exit
         try: 
             return self._change_PI18(path, value)
-        except:
+        except Exception as exc:
             logging.exception('Error in change loop', exc_info=True)
             mainloop.quit()
             return False
@@ -466,8 +603,7 @@ class DbusMppSolarService(object):
             for name, result in results.items():
                 if isinstance(result, dict) and result.get("result") == "error":
                     logging.warning(f"Error in update PI18 loop. {name} → {result.get('message')}")
-            self._updateInternal()
-            return True
+            raise RuntimeError("P18 polling command failed") from exc
 
         with self._dbusinverter as i, self._dbusmppt as m:
             # 0=Off;1=Low Power;2=Fault;9=Inverting
@@ -502,6 +638,7 @@ class DbusMppSolarService(object):
             if generated.get('data').get('wh') != 0 and generated.get('data').get('wh') != None:
                 m['/Yield/User'] = generated.get('data').get('wh') / 1000
                 m['/Yield/System'] = generated.get('data').get('wh') / 1000
+                m['/History/Overall/Yield'] = generated.get('data').get('wh') / 1000
             m['/MppOperationMode'] = 2 if (data.get('data').get('pv1_input_power', {}).get("value", 0) > 0) else 0
             m['/Link/ChargeCurrent'] =  rated.get('data').get('max_charging_current', {}).get("value",  m['/Link/ChargeCurrent']) # <- Maximum charge current. Must be written every 60 seconds. Used by GX device if there is a BMS or user limit.
             m['/Link/ChargeVoltage'] =  rated.get('data').get('battery_bulk_voltage', {}).get("value",  m['/Link/ChargeVoltage']) # <- Charge voltage. Must be written every 60 seconds. Used by GX device to communicate BMS charge voltages.
@@ -625,10 +762,16 @@ class DbusMppSolarService(object):
                 m["/History/Overall/MaxPower"] = data.get('data').get('pv1_input_power', {}).get("value")
             if data.get('data').get('battery_voltage', {}).get("value") != None and data.get('data').get('battery_voltage', {}).get("value") > m["/History/Overall/MaxBatteryVoltage"]:
                 m["/History/Overall/MaxBatteryVoltage"] = data.get('data').get('battery_voltage', {}).get("value")
-            if data.get('data').get('battery_voltage', {}).get("value") != None and data.get('data').get('battery_voltage', {}).get("value") < m["/History/Overall/MinBatteryVoltage"]:
-                m["/History/Overall/MinBatteryVoltage"] = data.get('data').get('battery_voltage', {}).get("value")
+            battery_voltage = data.get('data').get('battery_voltage', {}).get("value")
+            if battery_voltage is not None and (
+                m["/History/Overall/MinBatteryVoltage"] <= 0
+                or battery_voltage < m["/History/Overall/MinBatteryVoltage"]
+            ):
+                m["/History/Overall/MinBatteryVoltage"] = battery_voltage
             if data.get('data').get('battery_charge_current', {}).get("value") != None and data.get('data').get('battery_charge_current', {}).get("value") > m["/History/Overall/MaxBatteryCurrent"]:
                 m["/History/Overall/MaxBatteryCurrent"] = data.get('data').get('battery_charge_current', {}).get("value")
+            if m['/State'] == 3:
+                m['/History/Overall/TimeInBulk'] += self.poll_interval
 
         # Execute updates of previously updated values
         self._updateInternal()
@@ -662,7 +805,9 @@ class DbusMppSolarService(object):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--serial","-s", required=True, type=str)
+    parser.add_argument("--serial", "-s", required=True, help="Current /dev/hidraw path")
+    parser.add_argument("--serial-number", required=True, help="Validated permanent P18 serial")
+    parser.add_argument("--port", required=True, type=int, help="Manager-owned inverterd TCP port")
     global args
     args = parser.parse_args()
 
@@ -670,15 +815,25 @@ def main():
     # Have a mainloop, so we can send/receive asynchronous calls to and from dbus
     DBusGMainLoop(set_as_default=True)
 
-    mppservice = DbusMppSolarService(tty=args.serial, deviceinstance=0)
+    global mainloop
+    mainloop = GLib.MainLoop()
+    mppservice = DbusMppSolarService(
+        tty=args.serial,
+        serial_number=args.serial_number,
+        backend_port=args.port,
+    )
     logging.info('Created service & connected to dbus, switching over to GLib.MainLoop() (= event based)')
 
-    global mainloop
+    def stop_handler(signum, frame):
+        logging.info("Received signal %s", signum)
+        mainloop.quit()
 
-    mainloop = GLib.MainLoop()
+    signal.signal(signal.SIGTERM, stop_handler)
+    signal.signal(signal.SIGINT, stop_handler)
+    atexit.register(mppservice.shutdown)
     mainloop.run()
-
-    atexit.register(stop_inverterd)  # S'assure que inverterd est tué à la fin du script
+    mppservice.shutdown()
+    return mppservice.exit_code
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

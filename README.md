@@ -59,43 +59,25 @@ git clone --recurse-submodules https://github.com/TheBarnHome/dbus-mpp-p18 /data
 
 ---
 
-## 🧩 Configuration – `config.json`
+## 🧩 Automatic discovery and configuration
 
-You must provide a `config.json` file to define which inverters are connected and how they should be exposed to D-Bus.
+No `config.json` is required. `mppsolar-manager.py` scans `/dev/hidraw*` every two
+seconds, accepts only protocol 18 devices with a valid unique serial number, and
+automatically adds/removes them. The P18 serial is the permanent identity, so a
+USB reorder from `hidraw0` to `hidraw1` does not change the name, Device Instance,
+or history.
 
-Example configuration:
+Configure each device from Venus OS **Device information**:
 
-```json
-{
-  "/dev/hidraw1": {
-    "productname": "Master",
-    "deviceinstance": 0,
-    "numberOfChargers": 2,
-    "updateInterval": 10000
-  },
-  "/dev/hidraw0": {
-    "productname": "Slave_1",
-    "deviceinstance": 1,
-    "numberOfChargers": 2,
-    "updateInterval": 10000
-  }
-}
-```
+- **Name** (`/CustomName`);
+- **MPP Solar VRM instance** (`/Settings/DeviceInstance`, 1–255);
+- **MPP Solar polling interval** (`/Settings/PollInterval`, 5–60 seconds).
 
-Each key corresponds to a USB HID device (usually `/dev/hidrawX`). For each inverter, define:
-
-- `productname`: A display name for the inverter on D-Bus
-- `deviceinstance`: Unique identifier (integer) per inverter on D-Bus (0 = master)
-- `numberOfChargers`: Number of internal chargers (for for charge current when multiple inverters are used)
-- `updateInterval`: Polling interval in milliseconds (e.g. `10000` = 10 seconds)
-
-Place this file in the project directory:
-
-```
-/data/etc/dbus-mppsolar/config.json
-```
-
-> ⚠️ Make sure the correct `/dev/hidrawX` device numbers are used based on your system. You can run `dmesg | grep hidraw` or `ls /dev/hidraw*` to determine them.
+Settings are stored by `com.victronenergy.settings` under
+`/Settings/Devices/mppsolar_<serial>/`. A conflicting Device Instance is rejected;
+an accepted instance change restarts that inverter's two services. The number of
+parallel chargers is detected from P18 `get-p-rated` IDs 0–6 and falls back to the
+number of active P18 devices.
 
 ---
 
@@ -113,10 +95,37 @@ This script will:
 - Ensure your system is using the correct software feed
 - Install required dependencies (`python3-pip`, `git`, etc.)
 - Install `inverterd` via pip3
-- Set udev rules to automatically launch on USB insert (hidraw device)
+- Start a single hotplug manager on boot and USB changes
 - Ensure scripts are executable
 - Configure init startup logic for early detection
+- Add the two MPP Solar fields to Classic UI's `PageDeviceInfo.qml`, with an
+  idempotent backup/rollback patch reapplied from `/data/rc.local`
+- Install the prepared global gui-v2 plugin only when the official `/data/apps`
+  plugin framework is available (Venus OS is never upgraded by this project)
 - Reload udev rules and initialize services
+
+The stable services use the serial number in their names:
+
+```
+com.victronenergy.inverter.mppsolar-inverter.sn_<serial>
+com.victronenergy.solarcharger.mppsolar-charger.sn_<serial>
+```
+
+The current HID path is diagnostic only. The manager publishes its device list as
+`com.victronenergy.mppsolar.manager`.
+
+### Migration from `config.json`
+
+On the first update, `migrate-config.py` queries the already-running backends,
+builds `/data/etc/dbus-mppsolar-state/devices.json`, and captures the live D-Bus
+history before stopping anything. Only after every entry has a unique serial and
+Device Instance is the old file retained as `config.json.legacy`.
+
+To validate a legacy installation manually without changing it:
+
+```bash
+python3 migrate-config.py --dry-run
+```
 
 ---
 
@@ -132,20 +141,24 @@ bash update.sh
 
 The updater:
 
-- preserves the local `config.json`;
+- migrates a legacy `config.json` before the first service stop;
 - refuses to overwrite other local changes;
 - only accepts a fast-forward Git update;
-- creates a timestamped backup in `/data/etc/dbus-mppsolar-backups`;
+- creates separate timestamped code and state backups in
+  `/data/etc/dbus-mppsolar-backups`;
 - validates Python, JSON, and shell syntax before restarting;
-- restarts only the `dbus-mppsolar`/`inverterd` processes;
-- verifies that every expected inverter and solar charger returns on D-Bus;
-- automatically rolls back to the previous Git revision if validation or restart fails.
+- reapplies the Classic UI extension and conditionally installs gui-v2;
+- restarts only the manager and its child processes;
+- verifies the manager plus every serial-indexed inverter/charger service;
+- restores both the previous Git revision and persistent state on failure.
 
 Use `bash update.sh --no-restart` to install an update without restarting the
 running services. The new code will then be used on their next restart.
 
-> ⚠️ `config.json` is the only local modification accepted automatically. Commit,
-> revert, or move any other local changes before running an update.
+Persistent settings and history are outside the Git checkout in
+`/data/etc/dbus-mppsolar-state`. History is written atomically every five minutes
+and at controlled shutdown. A corrupt state file is renamed with a `.corrupt-*`
+suffix and safe defaults are used.
 
 ---
 
@@ -156,7 +169,7 @@ running services. The new code will then be used on their next restart.
 - Retrieves data via the **Python `inverterd-client`**
 - Publishes real-time metrics to **D-Bus** for consumption by **Venus OS** components (battery, system overview, etc.)
 - Supports multiple inverters connected simultaneously
-- Automatically starts on boot or USB device insertion
+- Automatically adds, removes, reconnects, and survives `hidraw` permutations
 
 ---
 

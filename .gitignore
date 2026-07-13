@@ -1,1 +1,7 @@
 build
+__pycache__/
+*.pyc
+gui-v2/**/*.qrc
+gui-v2/**/*.rcc
+gui-v2/**/*.qm
+gui-v2/**/*_en.ts

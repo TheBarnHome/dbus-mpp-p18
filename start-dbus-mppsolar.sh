@@ -1,16 +1,24 @@
-#!/bin/bash
+#!/bin/sh
 
-DEVICE=$1
-SERIAL_DEV="/dev/$DEVICE"
-APP=/data/etc/dbus-mppsolar/dbus-mppsolar.py
-LOGDIR=/var/log/dbus-mppsolar.$DEVICE
-PIDFILE="/var/run/dbus-mppsolar.$DEVICE.pid"
+set -eu
 
-echo "UTC-$(date -u +%Y.%m.%d-%H:%M:%S) Starting dbus-mppsolar.py on $DEVICE"
+INSTALL_DIR="${INSTALL_DIR:-/data/etc/dbus-mppsolar}"
+APP="$INSTALL_DIR/mppsolar-manager.py"
+PIDFILE="${PIDFILE:-/var/run/dbus-mppsolar-manager.pid}"
+LOGDIR="${LOGDIR:-/var/log/dbus-mppsolar-manager}"
+
+if [ -f "$PIDFILE" ]; then
+    pid=$(cat "$PIDFILE" 2>/dev/null || true)
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        exit 0
+    fi
+    rm -f "$PIDFILE"
+fi
 
 mkdir -p "$LOGDIR"
+echo "UTC-$(date -u +%Y.%m.%d-%H:%M:%S) Starting mppsolar-manager.py"
 
-exec start-stop-daemon --start \
-  --make-pidfile --pidfile "$PIDFILE" \
-  --exec /bin/sh -- -c \
-  "exec python3 $APP --serial $SERIAL_DEV 2>&1 | multilog t s25000 n4 $LOGDIR"
+exec start-stop-daemon --start --background \
+    --make-pidfile --pidfile "$PIDFILE" \
+    --exec /bin/sh -- -c \
+    "exec python3 '$APP' >> '$LOGDIR/current' 2>&1"
