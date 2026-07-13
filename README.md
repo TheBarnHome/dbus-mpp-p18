@@ -172,6 +172,14 @@ suffix and safe defaults are used.
 - Supports multiple inverters connected simultaneously
 - Automatically adds, removes, reconnects, and survives `hidraw` permutations
 
+P18 fault and warning data is published below `/Diagnostics/P18`. `FaultCode`
+and `FaultText` describe the active fault, while `ActiveWarnings` keeps the
+independent warning flags reported by the inverter. `AlertDataValid` is set to
+`0` if an incomplete response is received; the last valid alarm values are then
+preserved and `InvalidAlertCount` is incremented. `LineFail` remains a raw
+diagnostic and is not converted into a Venus alarm, because it is expected on an
+off-grid installation.
+
 ---
 
 ## 📦 Dependencies

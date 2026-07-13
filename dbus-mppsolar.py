@@ -34,6 +34,7 @@ from settingsdevice import SettingsDevice
 from mppsolar_common import (
     HISTORY_PATHS,
     HistoryStore,
+    P18_WARNING_FIELDS,
     POLL_DEFAULT,
     allocate_instance,
     backend_lock,
@@ -41,6 +42,8 @@ from mppsolar_common import (
     changed_charge_voltage,
     clamp_poll_interval,
     load_manifest,
+    normalize_p18_alerts,
+    p18_fault_text,
     service_suffix,
     settings_prefix,
     validate_serial,
@@ -222,6 +225,7 @@ class DbusMppSolarService(object):
         self._poll_source = None
         self._queued_updates = []
         self._last_p18_alerts = None
+        self._invalid_p18_alert_count = 0
         self._last_charge_voltage = None
         self._charge_voltage_write_count = 0
         self.history_store = HistoryStore(self.serial_number)
@@ -301,9 +305,18 @@ class DbusMppSolarService(object):
         # These paths remain useful through D-Bus/MQTT without creating false
         # alarms in Venus OS (notably LineFail on an off-grid installation).
         self._dbusinverter.add_path('/Diagnostics/P18/FaultCode', 0)
+        self._dbusinverter.add_path('/Diagnostics/P18/FaultText', 'No fault')
+        self._dbusinverter.add_path('/Diagnostics/P18/ActiveWarnings', '')
+        self._dbusinverter.add_path('/Diagnostics/P18/AlertDataValid', 0)
+        self._dbusinverter.add_path('/Diagnostics/P18/InvalidAlertCount', 0)
         self._dbusinverter.add_path('/Diagnostics/P18/LineFail', 0)
         self._dbusinverter.add_path('/Diagnostics/P18/OutputCircuitShort', 0)
+        self._dbusinverter.add_path('/Diagnostics/P18/InverterOverTemperature', 0)
         self._dbusinverter.add_path('/Diagnostics/P18/FanLock', 0)
+        self._dbusinverter.add_path('/Diagnostics/P18/BatteryVoltageHigh', 0)
+        self._dbusinverter.add_path('/Diagnostics/P18/BatteryLow', 0)
+        self._dbusinverter.add_path('/Diagnostics/P18/BatteryUnder', 0)
+        self._dbusinverter.add_path('/Diagnostics/P18/Overload', 0)
         self._dbusinverter.add_path('/Diagnostics/P18/EepromFail', 0)
         self._dbusinverter.add_path('/Diagnostics/P18/PowerLimit', 0)
 
@@ -758,18 +771,28 @@ class DbusMppSolarService(object):
             # P18 fault_code and warning flags are independent fields. Do not
             # gate warning processing on fault_code: doing so hides warnings
             # whenever the two-digit P18 fault code is zero.
-            alert_data = alerts.get('data')
-            if isinstance(alert_data, dict):
-                try:
-                    fault_code = int(alert_data.get('fault_code') or 0)
-                except (TypeError, ValueError):
-                    logging.warning("Invalid P18 fault_code: %r", alert_data.get('fault_code'))
-                    fault_code = 0
+            try:
+                alert_data = normalize_p18_alerts(alerts)
+            except ValueError as exc:
+                # Keep the last known values: clearing alarms from an incomplete
+                # response is more dangerous than briefly retaining stale data.
+                self._invalid_p18_alert_count += 1
+                i['/Diagnostics/P18/AlertDataValid'] = 0
+                i[
+                    '/Diagnostics/P18/InvalidAlertCount'
+                ] = self._invalid_p18_alert_count
+                logging.warning(
+                    "Ignoring invalid P18 get-errors response (%s): %r", exc, alerts
+                )
+            else:
+                fault_code = alert_data['fault_code']
 
                 def is_active(name):
-                    return bool(alert_data.get(name, False))
+                    return alert_data[name]
 
                 inverter_fault = invMode == 'Fault mode' or fault_code != 0
+                if fault_code != 0:
+                    i['/State'] = 2
 
                 def severity(active):
                     if not active:
@@ -797,9 +820,24 @@ class DbusMppSolarService(object):
                 # Preserve the complete P18 diagnosis without turning the
                 # expected off-grid LineFail flag into a Venus alarm.
                 i['/Diagnostics/P18/FaultCode'] = fault_code
+                i['/Diagnostics/P18/FaultText'] = p18_fault_text(fault_code)
+                active_alerts = [
+                    name for name in P18_WARNING_FIELDS if is_active(name)
+                ]
+                i['/Diagnostics/P18/ActiveWarnings'] = ', '.join(active_alerts)
+                i['/Diagnostics/P18/AlertDataValid'] = 1
                 i['/Diagnostics/P18/LineFail'] = int(is_active('line_fail'))
                 i['/Diagnostics/P18/OutputCircuitShort'] = int(output_circuit_short)
+                i['/Diagnostics/P18/InverterOverTemperature'] = int(
+                    is_active('inverter_over_temperature')
+                )
                 i['/Diagnostics/P18/FanLock'] = int(is_active('fan_lock'))
+                i['/Diagnostics/P18/BatteryVoltageHigh'] = int(
+                    is_active('battery_voltage_high')
+                )
+                i['/Diagnostics/P18/BatteryLow'] = int(battery_low)
+                i['/Diagnostics/P18/BatteryUnder'] = int(battery_under)
+                i['/Diagnostics/P18/Overload'] = int(is_active('over_load'))
                 i['/Diagnostics/P18/EepromFail'] = int(is_active('eeprom_fail'))
                 i['/Diagnostics/P18/PowerLimit'] = int(is_active('power_limit'))
 
@@ -833,25 +871,13 @@ class DbusMppSolarService(object):
                     device_off_reason |= 0x8000  # Active alarm.
                 m['/DeviceOffReason'] = device_off_reason
 
-                normalized_alerts = {
-                    'fault_code': fault_code,
-                    **{name: bool(value) for name, value in alert_data.items() if name != 'fault_code'}
-                }
-                if normalized_alerts != self._last_p18_alerts:
-                    active_alerts = [
-                        name for name, value in normalized_alerts.items()
-                        if name != 'fault_code' and value
-                    ]
+                if alert_data != self._last_p18_alerts:
                     logging.warning(
                         "P18 alert status changed: fault_code=%s, active=%s",
                         fault_code,
                         ', '.join(active_alerts) if active_alerts else 'none'
                     )
-                    self._last_p18_alerts = normalized_alerts
-            else:
-                # Preserve the last known alarm state on a transient malformed
-                # get-errors response instead of falsely clearing every alarm.
-                logging.warning("Ignoring invalid P18 get-errors response: %r", alerts)
+                    self._last_p18_alerts = alert_data
             # History
             # if generatedToday.get("generated_energy_for_day") != 0 and generatedToday.get("generated_energy_for_day") != None:
             #     m["/History/Overall/Yield"] = generatedToday.get("generated_energy_for_day") / 1000

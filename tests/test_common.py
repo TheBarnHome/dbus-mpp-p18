@@ -13,6 +13,8 @@ from mppsolar_common import (
     count_parallel_members,
     load_manifest,
     normalize_charge_voltage,
+    normalize_p18_alerts,
+    p18_fault_text,
     save_manifest,
     serial_from_response,
     service_suffix,
@@ -106,6 +108,52 @@ class ParallelTopologyTests(unittest.TestCase):
     def test_active_device_fallback_has_minimum_one(self):
         self.assertEqual(count_parallel_members([], fallback=3), 3)
         self.assertEqual(count_parallel_members([], fallback=0), 1)
+
+
+class P18AlertTests(unittest.TestCase):
+    def complete_response(self, **updates):
+        data = {
+            "fault_code": 0,
+            "line_fail": False,
+            "output_circuit_short": False,
+            "inverter_over_temperature": False,
+            "fan_lock": False,
+            "battery_voltage_high": False,
+            "battery_low": False,
+            "battery_under": False,
+            "over_load": False,
+            "eeprom_fail": False,
+            "power_limit": False,
+            "pv1_voltage_high": False,
+            "pv2_voltage_high": False,
+            "mppt1_overload_warning": False,
+            "mppt2_overload_warning": False,
+            "battery_too_low_to_charge_for_scc1": False,
+            "battery_too_low_to_charge_for_scc2": False,
+        }
+        data.update(updates)
+        return {"result": "ok", "data": data}
+
+    def test_complete_alert_response_is_normalized(self):
+        alerts = normalize_p18_alerts(
+            self.complete_response(line_fail=True, eeprom_fail="1")
+        )
+        self.assertTrue(alerts["line_fail"])
+        self.assertTrue(alerts["eeprom_fail"])
+        self.assertFalse(alerts["fan_lock"])
+
+    def test_incomplete_or_ambiguous_alert_response_is_rejected(self):
+        response = self.complete_response()
+        del response["data"]["eeprom_fail"]
+        with self.assertRaisesRegex(ValueError, "eeprom_fail"):
+            normalize_p18_alerts(response)
+        with self.assertRaisesRegex(ValueError, "not boolean"):
+            normalize_p18_alerts(self.complete_response(line_fail="yes"))
+
+    def test_fault_text_is_explicit_for_known_and_unknown_codes(self):
+        self.assertEqual(p18_fault_text(0), "No fault")
+        self.assertEqual(p18_fault_text(80), "CAN communication failed")
+        self.assertEqual(p18_fault_text(99), "Unknown fault code 99")
 
 
 class PersistentStateTests(unittest.TestCase):

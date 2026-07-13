@@ -24,6 +24,55 @@ POLL_MAX = 60
 POLL_DEFAULT = 10
 INSTANCE_MIN = 1
 INSTANCE_MAX = 255
+P18_WARNING_FIELDS = (
+    "line_fail",
+    "output_circuit_short",
+    "inverter_over_temperature",
+    "fan_lock",
+    "battery_voltage_high",
+    "battery_low",
+    "battery_under",
+    "over_load",
+    "eeprom_fail",
+    "power_limit",
+    "pv1_voltage_high",
+    "pv2_voltage_high",
+    "mppt1_overload_warning",
+    "mppt2_overload_warning",
+    "battery_too_low_to_charge_for_scc1",
+    "battery_too_low_to_charge_for_scc2",
+)
+P18_FAULT_TEXT = {
+    0: "No fault",
+    1: "Fan is locked",
+    2: "Over temperature",
+    3: "Battery voltage is too high",
+    4: "Battery voltage is too low",
+    5: "Output short circuited or over temperature",
+    6: "Output voltage is too high",
+    7: "Overload timed out",
+    8: "Bus voltage is too high",
+    9: "Bus soft start failed",
+    11: "Main relay failed",
+    51: "Inverter over current",
+    52: "Bus soft start failed",
+    53: "Inverter soft start failed",
+    54: "Self-test failed",
+    55: "DC voltage detected on inverter output",
+    56: "Battery connection is open",
+    57: "Current sensor failed",
+    58: "Output voltage is too low",
+    60: "Inverter negative power",
+    71: "Parallel version differs",
+    72: "Output circuit failed",
+    80: "CAN communication failed",
+    81: "Parallel host line lost",
+    82: "Parallel synchronization signal lost",
+    83: "Parallel battery voltage differs",
+    84: "Parallel line voltage or frequency differs",
+    85: "Parallel line input current is unbalanced",
+    86: "Parallel output setting differs",
+}
 BACKEND_LOCK_DIR = Path(
     os.environ.get("DBUS_MPP_LOCK_DIR", str(STATE_DIR / "locks"))
 )
@@ -259,6 +308,58 @@ def parse_p18_result(response: object) -> dict:
     if not isinstance(data, dict):
         raise ValueError("P18 response has no data")
     return data
+
+
+def normalize_p18_alerts(response: object) -> dict[str, int | bool]:
+    """Validate and normalize the complete P18 FWS response."""
+    data = parse_p18_result(response)
+    if "fault_code" not in data:
+        raise ValueError("P18 alert response has no fault_code")
+    raw_fault_code = data["fault_code"]
+    if isinstance(raw_fault_code, bool):
+        raise ValueError("P18 fault_code is not an integer")
+    if isinstance(raw_fault_code, int):
+        fault_code = raw_fault_code
+    elif isinstance(raw_fault_code, str) and re.fullmatch(
+        r"[0-9]+", raw_fault_code.strip()
+    ):
+        fault_code = int(raw_fault_code)
+    else:
+        raise ValueError("P18 fault_code is not an integer")
+    if fault_code < 0:
+        raise ValueError("P18 fault_code cannot be negative")
+
+    normalized: dict[str, int | bool] = {"fault_code": fault_code}
+    for name in P18_WARNING_FIELDS:
+        if name not in data:
+            raise ValueError(f"P18 alert response has no {name}")
+        value = data[name]
+        if isinstance(value, bool):
+            normalized[name] = value
+        elif (
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and value in (0, 1)
+        ):
+            normalized[name] = bool(value)
+        elif isinstance(value, str) and value.strip().lower() in (
+            "0",
+            "1",
+            "false",
+            "true",
+        ):
+            normalized[name] = value.strip().lower() in ("1", "true")
+        else:
+            raise ValueError(f"P18 alert {name} is not boolean")
+    return normalized
+
+
+def p18_fault_text(fault_code: object) -> str:
+    try:
+        code = int(fault_code)
+    except (TypeError, ValueError):
+        return "Invalid fault code"
+    return P18_FAULT_TEXT.get(code, f"Unknown fault code {code}")
 
 
 def serial_from_response(response: object) -> str:

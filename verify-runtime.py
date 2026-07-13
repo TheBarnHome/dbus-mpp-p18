@@ -119,10 +119,16 @@ def verify(require_migrated=False, expected_serials=(), require_legacy_backup=Fa
             setting_base = settings_prefix(serial)
             inv_values = read_values(inverter, [
                 "/Serial", "/CustomName", "/DeviceInstance", "/Settings/PollInterval",
-                "/Mode", "/Diagnostics/P18/NumberOfChargers", "/Diagnostics/P18/CurrentHidraw",
+                "/Mode", "/State", "/Alarms/LowVoltage", "/Alarms/HighVoltage",
+                "/Alarms/HighTemperature", "/Alarms/Overload",
+                "/Diagnostics/P18/NumberOfChargers", "/Diagnostics/P18/CurrentHidraw",
+                "/Diagnostics/P18/FaultCode", "/Diagnostics/P18/FaultText",
+                "/Diagnostics/P18/ActiveWarnings", "/Diagnostics/P18/AlertDataValid",
+                "/Diagnostics/P18/InvalidAlertCount",
             ])
             chg_values = read_values(charger, [
                 "/Serial", "/CustomName", "/DeviceInstance", "/Settings/PollInterval", "/Mode",
+                "/Alarms/LowVoltage", "/Alarms/HighVoltage",
             ])
             setting_values = read_values("com.victronenergy.settings", [
                 f"{setting_base}/CustomName",
@@ -139,8 +145,14 @@ def verify(require_migrated=False, expected_serials=(), require_legacy_backup=Fa
             chg_poll = int(chg_values["/Settings/PollInterval"])
             inverter_mode = int(inv_values["/Mode"])
             charger_mode = int(chg_values["/Mode"])
+            inverter_state = int(inv_values["/State"])
             topology = int(inv_values["/Diagnostics/P18/NumberOfChargers"])
             hidraw = str(inv_values["/Diagnostics/P18/CurrentHidraw"])
+            fault_code = int(inv_values["/Diagnostics/P18/FaultCode"])
+            fault_text = str(inv_values["/Diagnostics/P18/FaultText"])
+            active_warnings = str(inv_values["/Diagnostics/P18/ActiveWarnings"])
+            alert_data_valid = int(inv_values["/Diagnostics/P18/AlertDataValid"])
+            invalid_alert_count = int(inv_values["/Diagnostics/P18/InvalidAlertCount"])
             saved_name = str(setting_values[f"{setting_base}/CustomName"])
             saved_instance = int(setting_values[f"{setting_base}/DeviceInstance"])
             saved_poll = int(setting_values[f"{setting_base}/PollInterval"])
@@ -150,6 +162,32 @@ def verify(require_migrated=False, expected_serials=(), require_legacy_backup=Fa
             check(inv_poll == chg_poll, f"poll interval mismatch for {serial}")
             check(inverter_mode == 2, f"invalid inverter mode {inverter_mode} for {serial}")
             check(charger_mode == 1, f"invalid charger mode {charger_mode} for {serial}")
+            check(alert_data_valid == 1, f"invalid P18 alert data for {serial}")
+            check(fault_code >= 0, f"invalid P18 fault code {fault_code} for {serial}")
+            check(bool(fault_text), f"missing P18 fault text for {serial}")
+            check(
+                fault_code == 0 or inverter_state == 2,
+                f"P18 fault {fault_code} is not reflected in inverter state for {serial}",
+            )
+            check(
+                invalid_alert_count >= 0,
+                f"invalid P18 alert counter {invalid_alert_count} for {serial}",
+            )
+            for alarm_path in (
+                "/Alarms/LowVoltage",
+                "/Alarms/HighVoltage",
+                "/Alarms/HighTemperature",
+                "/Alarms/Overload",
+            ):
+                check(
+                    int(inv_values[alarm_path]) in (0, 1, 2),
+                    f"invalid inverter alarm {alarm_path} for {serial}",
+                )
+            for alarm_path in ("/Alarms/LowVoltage", "/Alarms/HighVoltage"):
+                check(
+                    int(chg_values[alarm_path]) in (0, 1, 2),
+                    f"invalid charger alarm {alarm_path} for {serial}",
+                )
             check(topology >= 1, f"invalid numberOfChargers {topology} for {serial}")
             check(hidraw.startswith("/dev/hidraw"), f"invalid HID path for {serial}: {hidraw}")
             check(inv_name == saved_name, f"name not persisted for {serial}")
@@ -167,7 +205,9 @@ def verify(require_migrated=False, expected_serials=(), require_legacy_backup=Fa
             check(HistoryStore(serial).path.exists(), f"history file missing for {serial}")
             report.append(
                 f"{serial} name={inv_name!r} instance={inv_instance} poll={inv_poll}s "
-                f"hidraw={hidraw} chargers={topology} modes={inverter_mode}/{charger_mode}"
+                f"hidraw={hidraw} chargers={topology} modes={inverter_mode}/{charger_mode} "
+                f"fault={fault_code}:{fault_text!r} warnings={active_warnings!r} "
+                f"invalid_alerts={invalid_alert_count}"
             )
         except Exception as exc:
             failures.append(f"runtime values for {serial}: {exc}")
