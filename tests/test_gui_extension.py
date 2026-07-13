@@ -49,6 +49,7 @@ class ClassicGuiPatchTests(unittest.TestCase):
                 gui_extension.install_rc_local(Path("/data/test/install-gui-extension.py"))
             text = rc_local.read_text(encoding="utf-8")
             self.assertEqual(text.count("DBUS_MPP_P18_GUI_BEGIN"), 1)
+            self.assertIn("--restart-gui", text)
             self.assertLess(text.index("DBUS_MPP_P18_GUI_BEGIN"), text.index("exit 0"))
 
 

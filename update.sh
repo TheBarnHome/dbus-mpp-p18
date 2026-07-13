@@ -368,7 +368,7 @@ validate_installation
 
 if [ "$NO_RESTART" -eq 0 ]; then
     install_boot_integration
-    python3 "$INSTALL_DIR/install-gui-extension.py"
+    python3 "$INSTALL_DIR/install-gui-extension.py" --restart-gui
     if [ -d /data/apps ]; then "$INSTALL_DIR/install-gui-v2-plugin.sh"; fi
     start_services
     check_services

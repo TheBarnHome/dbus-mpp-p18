@@ -81,7 +81,7 @@ udevadm trigger
 mkdir -p /data/etc/dbus-mppsolar-state
 
 echo "🖥️ Applying the idempotent Classic UI extension..."
-python3 "$INSTALL_DIR/install-gui-extension.py"
+python3 "$INSTALL_DIR/install-gui-extension.py" --restart-gui
 
 if [ -d /data/apps ]; then
     echo "🧩 Official gui-v2 app directory detected; installing the prepared plugin"

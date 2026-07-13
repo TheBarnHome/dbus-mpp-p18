@@ -9,10 +9,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 
 DEFAULT_TARGET = Path("/opt/victronenergy/gui/qml/PageDeviceInfo.qml")
+DEFAULT_GUI_SERVICE = Path("/service/gui")
 BEGIN = "\t\t/* DBUS_MPP_P18_SETTINGS_BEGIN */"
 END = "\t\t/* DBUS_MPP_P18_SETTINGS_END */"
 SNIPPET = r'''
@@ -119,7 +121,8 @@ def install_rc_local(script_path):
     end = "# DBUS_MPP_P18_GUI_END"
     block = (
         f"{begin}\n"
-        f"python3 '{script_path}' >/var/log/dbus-mppsolar-gui-patch.log 2>&1 || true\n"
+        f"python3 '{script_path}' --restart-gui "
+        f">/var/log/dbus-mppsolar-gui-patch.log 2>&1 || true\n"
         f"{end}\n"
     )
     text = rc_local.read_text(encoding="utf-8") if rc_local.exists() else "#!/bin/sh\n"
@@ -143,10 +146,34 @@ def install_rc_local(script_path):
     rc_local.chmod(rc_local.stat().st_mode | 0o111)
 
 
+def restart_classic_gui(service=DEFAULT_GUI_SERVICE):
+    service = Path(service)
+    svc = shutil.which("svc")
+    pidof = shutil.which("pidof")
+    if not service.exists() or not svc or not pidof:
+        return False
+    current = subprocess.run(
+        [pidof, "gui"], capture_output=True, text=True, check=False
+    ).stdout.strip()
+    if not current:
+        return False
+    subprocess.run([svc, "-t", str(service)], check=True)
+    for _ in range(20):
+        time.sleep(0.25)
+        new_pid = subprocess.run(
+            [pidof, "gui"], capture_output=True, text=True, check=False
+        ).stdout.strip()
+        if new_pid and new_pid != current:
+            print(f"Classic UI reloaded: PID {current} -> {new_pid}")
+            return True
+    raise RuntimeError("Classic UI did not restart after QML update")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--target", default=str(DEFAULT_TARGET))
     parser.add_argument("--no-rc-local", action="store_true")
+    parser.add_argument("--restart-gui", action="store_true")
     parser.add_argument("--restore", action="store_true")
     args = parser.parse_args()
     target = Path(args.target)
@@ -161,6 +188,8 @@ def main():
     try:
         if not args.no_rc_local:
             install_rc_local(Path(__file__).resolve())
+        if args.restart_gui:
+            restart_classic_gui()
     except Exception:
         if patched and backup.exists():
             shutil.copy2(backup, target)
