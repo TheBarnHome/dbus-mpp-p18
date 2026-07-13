@@ -285,9 +285,14 @@ class MppSolarManager:
         self._terminate_process(record.backend)
         record.log_handle.close()
 
-    def _read_service_value(self, service, path, default):
+    def _read_setting(self, serial, setting_name, default):
         try:
-            value = VeDbusItemImport(self.bus, service, path, createsignal=False).get_value()
+            value = VeDbusItemImport(
+                self.bus,
+                "com.victronenergy.settings",
+                f"{settings_prefix(serial)}/{setting_name}",
+                createsignal=False,
+            ).get_value()
             return default if value is None else value
         except Exception:
             return default
@@ -315,14 +320,14 @@ class MppSolarManager:
             self.service[f"{prefix}/Hidraw"] = record.path
             self.service[f"{prefix}/InverterService"] = inverter_service
             self.service[f"{prefix}/ChargerService"] = charger_service
-            self.service[f"{prefix}/CustomName"] = self._read_service_value(
-                inverter_service, "/CustomName", saved.get("custom_name", "")
+            self.service[f"{prefix}/CustomName"] = self._read_setting(
+                record.serial, "CustomName", saved.get("custom_name", "")
             )
-            self.service[f"{prefix}/DeviceInstance"] = self._read_service_value(
-                inverter_service, "/Settings/DeviceInstance", saved.get("device_instance", 0)
+            self.service[f"{prefix}/DeviceInstance"] = self._read_setting(
+                record.serial, "DeviceInstance", saved.get("device_instance", 0)
             )
-            self.service[f"{prefix}/PollInterval"] = self._read_service_value(
-                inverter_service, "/Settings/PollInterval", saved.get("poll_interval", 10)
+            self.service[f"{prefix}/PollInterval"] = self._read_setting(
+                record.serial, "PollInterval", saved.get("poll_interval", 10)
             )
 
     def _notify_topology_change(self):
