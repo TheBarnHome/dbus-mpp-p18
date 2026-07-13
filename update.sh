@@ -351,6 +351,12 @@ if [ -f "$INSTALL_DIR/$CONFIG_REL" ]; then
     fi
 fi
 
+# The legacy installer applied executable bits outside Git. The preflight check
+# above proved that tracked file contents are clean (mode-only differences are
+# allowed), and config.json is now backed up. Normalize the tracked worktree so
+# an upstream commit which records those executable bits can fast-forward cleanly.
+git checkout -- .
+
 UPDATE_STARTED=1
 log "Applying fast-forward update..."
 git pull --ff-only --recurse-submodules
