@@ -199,9 +199,9 @@ class DbusMppSolarService(object):
         deviceinstance = allocate_instance(used_instances, preferred_instance)
         default_name = str(saved.get('custom_name') or f"MPP Solar {self.serial_number[-6:]}")[:32]
         default_poll = clamp_poll_interval(saved.get('poll_interval', POLL_DEFAULT))
-        bus = dbusconnection()
+        settings_bus = dbusconnection()
         self._settings = SettingsDevice(
-            bus=bus,
+            bus=settings_bus,
             supportedSettings={
                 'custom_name': [f'{self.settings_base}/CustomName', default_name, 0, 0],
                 'device_instance': [f'{self.settings_base}/DeviceInstance', deviceinstance, 1, 255],
@@ -223,8 +223,16 @@ class DbusMppSolarService(object):
         
         # Create the services
         suffix = service_suffix(self.serial_number)
-        self._dbusinverter = VeDbusService(f'com.victronenergy.inverter.mppsolar-inverter.{suffix}', bus=bus, register=False)
-        self._dbusmppt = VeDbusService(f'com.victronenergy.solarcharger.mppsolar-charger.{suffix}', bus=bus, register=False)
+        # dbus-python allows only one object-path handler for '/' per
+        # connection. Each VeDbusService therefore needs its own connection.
+        self._dbusinverter = VeDbusService(
+            f'com.victronenergy.inverter.mppsolar-inverter.{suffix}',
+            bus=dbusconnection(), register=False,
+        )
+        self._dbusmppt = VeDbusService(
+            f'com.victronenergy.solarcharger.mppsolar-charger.{suffix}',
+            bus=dbusconnection(), register=False,
+        )
 
         # Set up default paths
         self.setupInverterDefaultPaths(self._dbusinverter, connection, deviceinstance, "MPP Solar Inverter")

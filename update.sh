@@ -273,7 +273,7 @@ git rev-parse --verify '@{upstream}' >/dev/null 2>&1 || { log "No upstream branc
 submodule_status=$(git submodule status --recursive)
 grep -q '^-' <<< "$submodule_status" && { log "Git submodules are not initialized."; exit 1; }
 unexpected_changes=$(git -c core.fileMode=false status --porcelain --untracked-files=all \
-    | sed '/^.. config\.json$/d; /^.. config\.json\.legacy$/d')
+    | sed '/^.. config\.json$/d; /^.. config\.json\.legacy$/d; /^?? __pycache__\//d')
 [ -z "$unexpected_changes" ] || {
     log "Update refused: local project changes exist:"; printf '%s\n' "$unexpected_changes"; exit 1;
 }

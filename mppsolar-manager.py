@@ -252,7 +252,6 @@ class MppSolarManager:
             self.records[path] = DeviceRecord(
                 path, serial, port, backend, driver, log_handle, time.monotonic()
             )
-            self.failed.pop(path, None)
             logging.info("Started serial %s on %s (port %s)", serial, path, port)
         except Exception as exc:
             logging.warning("Ignoring %s: %s", path, exc)
