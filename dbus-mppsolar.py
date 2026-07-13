@@ -37,6 +37,7 @@ from mppsolar_common import (
     POLL_DEFAULT,
     allocate_instance,
     backend_lock,
+    call_with_retries,
     clamp_poll_interval,
     load_manifest,
     service_suffix,
@@ -48,6 +49,8 @@ port = None
 host = '127.0.0.1'
 usb_path = ''
 output_format=Format.JSON
+POLL_READ_ATTEMPTS = 2
+POLL_READ_RETRY_DELAY = 0.5
 
 # For production history
 energyProductionDays = None
@@ -101,6 +104,24 @@ def runInverterCommands(command: str, params: tuple = (), timeout_sec: int = 10)
     except TimeoutError:
         logging.error("inverterd timed out while running %s", command)
         raise
+
+def runReadInverterCommand(command: str, params: tuple = (), timeout_sec: int = 10):
+    """Run a read-only P18 command, retrying once with a fresh client."""
+    def log_retry(exc, attempt, attempts):
+        logging.warning(
+            "P18 read %s failed on attempt %d/%d: %s; retrying",
+            command,
+            attempt,
+            attempts,
+            exc,
+        )
+
+    return call_with_retries(
+        lambda: safe_runInverterCommands(command, params, timeout_sec),
+        attempts=POLL_READ_ATTEMPTS,
+        retry_delay=POLL_READ_RETRY_DELAY,
+        on_retry=log_retry,
+    )
 
 def find_battery_service():
     bus = dbus.SystemBus()
@@ -625,11 +646,11 @@ class DbusMppSolarService(object):
         #     logging.warning("Max charge current not defined.", exc_info=True)
         
         try:
-            generated = runInverterCommands('get-total-generated')
-            data = runInverterCommands('get-status')
-            mode = runInverterCommands('get-mode')
-            rated = runInverterCommands('get-rated')
-            alerts = runInverterCommands('get-errors')
+            generated = runReadInverterCommand('get-total-generated')
+            data = runReadInverterCommand('get-status')
+            mode = runReadInverterCommand('get-mode')
+            rated = runReadInverterCommand('get-rated')
+            alerts = runReadInverterCommand('get-errors')
 
         except Exception as exc:
             results = {

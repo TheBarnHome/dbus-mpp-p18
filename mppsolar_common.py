@@ -60,6 +60,21 @@ def backend_lock(port: int):
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+def call_with_retries(call, attempts: int = 2, retry_delay: float = 0.5, on_retry=None):
+    """Run a read operation again after a transient failure."""
+    attempts = max(1, int(attempts))
+    for attempt in range(1, attempts + 1):
+        try:
+            return call()
+        except Exception as exc:
+            if attempt >= attempts:
+                raise
+            if on_retry is not None:
+                on_retry(exc, attempt, attempts)
+            if retry_delay > 0:
+                time.sleep(retry_delay)
+
+
 def validate_serial(serial: object) -> str:
     """Return a P18 serial safe for D-Bus/settings paths, or raise ValueError."""
     value = str(serial or "").strip()

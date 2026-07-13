@@ -6,6 +6,7 @@ from pathlib import Path
 from mppsolar_common import (
     HistoryStore,
     allocate_instance,
+    call_with_retries,
     clamp_poll_interval,
     count_parallel_members,
     load_manifest,
@@ -14,6 +15,43 @@ from mppsolar_common import (
     service_suffix,
     validate_serial,
 )
+
+
+class RetryTests(unittest.TestCase):
+    def test_transient_failure_is_retried(self):
+        calls = []
+        retries = []
+
+        def operation():
+            calls.append(len(calls) + 1)
+            if len(calls) == 1:
+                raise RuntimeError("transient failure")
+            return "ok"
+
+        result = call_with_retries(
+            operation,
+            attempts=2,
+            retry_delay=0,
+            on_retry=lambda exc, attempt, attempts: retries.append(
+                (str(exc), attempt, attempts)
+            ),
+        )
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(calls, [1, 2])
+        self.assertEqual(retries, [("transient failure", 1, 2)])
+
+    def test_last_failure_is_raised_after_all_attempts(self):
+        calls = []
+
+        def operation():
+            calls.append(len(calls) + 1)
+            raise RuntimeError(f"failure {len(calls)}")
+
+        with self.assertRaisesRegex(RuntimeError, "failure 2"):
+            call_with_retries(operation, attempts=2, retry_delay=0)
+
+        self.assertEqual(calls, [1, 2])
 
 
 class IdentityTests(unittest.TestCase):
