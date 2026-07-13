@@ -99,6 +99,7 @@ set_runtime_permissions() {
         "$INSTALL_DIR/dbus-mppsolar.py" \
         "$INSTALL_DIR/mppsolar-manager.py" \
         "$INSTALL_DIR/migrate-config.py" \
+        "$INSTALL_DIR/verify-runtime.py" \
         "$INSTALL_DIR/inverterd" \
         "$INSTALL_DIR/start-dbus-mppsolar.sh" \
         "$INSTALL_DIR/scan-hidraw.sh" \
@@ -131,8 +132,11 @@ check_services() {
             printf '%s\n' "$names" | grep -Fq "com.victronenergy.solarcharger.mppsolar-charger.$suffix" || ready=0
         done
         if [ "$ready" -eq 1 ]; then
-            log "All expected D-Bus services are available."
-            return 0
+            if python3 "$INSTALL_DIR/verify-runtime.py" --require-migrated; then
+                log "All expected D-Bus services and values are valid."
+                return 0
+            fi
+            ready=0
         fi
         sleep 1
         elapsed=$((elapsed + 1))
@@ -148,6 +152,7 @@ validate_installation() {
         "$INSTALL_DIR/mppsolar-manager.py" \
         "$INSTALL_DIR/mppsolar_common.py" \
         "$INSTALL_DIR/migrate-config.py" \
+        "$INSTALL_DIR/verify-runtime.py" \
         "$INSTALL_DIR/install-gui-extension.py"
     bash -n "$INSTALL_DIR/update.sh"
     bash -n "$INSTALL_DIR/install.sh"

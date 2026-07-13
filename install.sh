@@ -63,6 +63,7 @@ if [ -f "$START_SCRIPT" ]; then
     chmod +x "$INSTALL_DIR/dbus-mppsolar.py"
     chmod +x "$INSTALL_DIR/mppsolar-manager.py"
     chmod +x "$INSTALL_DIR/migrate-config.py"
+    chmod +x "$INSTALL_DIR/verify-runtime.py"
     chmod +x "$INSTALL_DIR/inverterd"
     chmod +x "$INSTALL_DIR/start-dbus-mppsolar.sh"
     chmod +x "$INSTALL_DIR/scan-hidraw.sh"
