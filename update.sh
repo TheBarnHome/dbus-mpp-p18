@@ -61,6 +61,21 @@ cleanup() {
 
 find_project_pids() {
     {
+        python3 -c '
+import dbus
+bus = dbus.SystemBus()
+daemon = bus.get_object("org.freedesktop.DBus", "/org/freedesktop/DBus")
+prefixes = (
+    "com.victronenergy.mppsolar.manager",
+    "com.victronenergy.inverter.mppsolar-inverter.sn_",
+    "com.victronenergy.solarcharger.mppsolar-charger.sn_",
+)
+for name in bus.list_names():
+    if name.startswith(prefixes):
+        print(int(daemon.GetConnectionUnixProcessID(
+            name, dbus_interface="org.freedesktop.DBus"
+        )))
+' 2>/dev/null || true
         ps | grep -F "$INSTALL_DIR/mppsolar-manager.py" | grep -v grep | awk '{print $1}' || true
         ps | grep -F "$INSTALL_DIR/dbus-mppsolar.py" | grep -v grep | awk '{print $1}' || true
         ps | grep -F "$INSTALL_DIR/inverterd" | grep -v grep | awk '{print $1}' || true
