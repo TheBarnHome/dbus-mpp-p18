@@ -15,6 +15,11 @@ OLD_REVISION=""
 BACKUP_ARCHIVE=""
 STATE_BACKUP=""
 EXPECTED_SERIALS=""
+SYSTEM_BACKUP_DIR=""
+QML_TARGET="/opt/victronenergy/gui/qml/PageDeviceInfo.qml"
+UDEV_RULE="/etc/udev/rules.d/99-mppsolar.rules"
+INIT_SCRIPT="/etc/init.d/scan-hidraw.sh"
+RCS_LINK="/etc/rcS.d/S99scan-hidraw"
 
 log() { printf '%s\n' "$*"; }
 
@@ -150,6 +155,75 @@ validate_installation() {
     [ -x "$INSTALL_DIR/inverterd" ]
 }
 
+backup_optional_file() {
+    local source=$1 name=$2
+    if [ -e "$source" ] || [ -L "$source" ]; then
+        cp -p "$source" "$SYSTEM_BACKUP_DIR/$name"
+    else
+        : > "$SYSTEM_BACKUP_DIR/$name.absent"
+    fi
+}
+
+backup_system_integration() {
+    SYSTEM_BACKUP_DIR="$BACKUP_DIR/dbus-mppsolar-system-$timestamp-$OLD_REVISION"
+    mkdir -p "$SYSTEM_BACKUP_DIR"
+    backup_optional_file "$QML_TARGET" PageDeviceInfo.qml
+    backup_optional_file /data/rc.local rc.local
+    backup_optional_file "$UDEV_RULE" 99-mppsolar.rules
+    backup_optional_file "$INIT_SCRIPT" scan-hidraw.sh
+    if [ -L "$RCS_LINK" ]; then
+        readlink "$RCS_LINK" > "$SYSTEM_BACKUP_DIR/rcs-link-target"
+    elif [ -e "$RCS_LINK" ]; then
+        cp -p "$RCS_LINK" "$SYSTEM_BACKUP_DIR/rcs-link-file"
+    else
+        : > "$SYSTEM_BACKUP_DIR/rcs-link.absent"
+    fi
+}
+
+restore_optional_file() {
+    local destination=$1 name=$2
+    if [ -f "$SYSTEM_BACKUP_DIR/$name.absent" ]; then
+        rm -f "$destination"
+    elif [ -e "$SYSTEM_BACKUP_DIR/$name" ]; then
+        cp -p "$SYSTEM_BACKUP_DIR/$name" "$destination"
+    fi
+}
+
+restore_system_integration() {
+    [ -n "$SYSTEM_BACKUP_DIR" ] && [ -d "$SYSTEM_BACKUP_DIR" ] || return 0
+    restore_optional_file "$QML_TARGET" PageDeviceInfo.qml
+    restore_optional_file /data/rc.local rc.local
+    restore_optional_file "$UDEV_RULE" 99-mppsolar.rules
+    restore_optional_file "$INIT_SCRIPT" scan-hidraw.sh
+    rm -f "$RCS_LINK"
+    if [ -f "$SYSTEM_BACKUP_DIR/rcs-link-target" ]; then
+        ln -s "$(cat "$SYSTEM_BACKUP_DIR/rcs-link-target")" "$RCS_LINK"
+    elif [ -f "$SYSTEM_BACKUP_DIR/rcs-link-file" ]; then
+        cp -p "$SYSTEM_BACKUP_DIR/rcs-link-file" "$RCS_LINK"
+    fi
+    udevadm control --reload 2>/dev/null || true
+}
+
+install_boot_integration() {
+    printf '%s\n' \
+        'ACTION=="add|change|remove", SUBSYSTEM=="hidraw", KERNEL=="hidraw*", RUN+="/data/etc/dbus-mppsolar/start-dbus-mppsolar.sh"' \
+        > "$UDEV_RULE"
+    cp -p "$INSTALL_DIR/scan-hidraw.sh" "$INIT_SCRIPT"
+    chmod +x "$INIT_SCRIPT"
+    if [ -L "$RCS_LINK" ]; then
+        [ "$(readlink "$RCS_LINK")" = "$INIT_SCRIPT" ] || {
+            rm -f "$RCS_LINK"
+            ln -s "$INIT_SCRIPT" "$RCS_LINK"
+        }
+    elif [ -e "$RCS_LINK" ]; then
+        log "Refusing to replace non-symlink $RCS_LINK"
+        return 1
+    else
+        ln -s "$INIT_SCRIPT" "$RCS_LINK"
+    fi
+    udevadm control --reload
+}
+
 restore_state() {
     [ -n "$STATE_BACKUP" ] && [ -f "$STATE_BACKUP" ] || return 0
     rm -rf "$STATE_DIR"
@@ -169,6 +243,7 @@ rollback() {
         cp -p "$INSTALL_DIR/config.json.legacy" "$INSTALL_DIR/config.json"
     fi
     set_runtime_permissions 2>/dev/null || true
+    restore_system_integration
     if [ "$SERVICES_TOUCHED" -eq 1 ]; then
         start_services
     fi
@@ -221,6 +296,7 @@ BACKUP_ARCHIVE="$BACKUP_DIR/dbus-mppsolar-code-$timestamp-$OLD_REVISION.tar.gz"
 STATE_BACKUP="$BACKUP_DIR/dbus-mppsolar-state-$timestamp-$OLD_REVISION.tar.gz"
 tar --exclude='.git' -czf "$BACKUP_ARCHIVE" -C "$INSTALL_DIR" .
 tar -tzf "$BACKUP_ARCHIVE" >/dev/null
+backup_system_integration
 
 if [ "$NO_RESTART" -eq 0 ] && [ -f config.json ]; then
     log "Migrating legacy configuration and live D-Bus history before shutdown..."
@@ -247,17 +323,19 @@ git pull --ff-only --recurse-submodules
 git submodule update --init --recursive
 set_runtime_permissions
 validate_installation
-python3 "$INSTALL_DIR/install-gui-extension.py"
-if [ -d /data/apps ]; then "$INSTALL_DIR/install-gui-v2-plugin.sh"; fi
 
 if [ "$NO_RESTART" -eq 0 ]; then
+    install_boot_integration
+    python3 "$INSTALL_DIR/install-gui-extension.py"
+    if [ -d /data/apps ]; then "$INSTALL_DIR/install-gui-v2-plugin.sh"; fi
     start_services
     check_services
 else
-    log "Services were not restarted (--no-restart)."
+    log "Services and UI/boot integration were not changed (--no-restart)."
 fi
 
 UPDATE_STARTED=0
 log "Update completed successfully at $(git rev-parse HEAD)."
 log "Code backup: $BACKUP_ARCHIVE"
 log "State backup: $STATE_BACKUP"
+log "System integration backup: $SYSTEM_BACKUP_DIR"
