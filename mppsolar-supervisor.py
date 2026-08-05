@@ -16,6 +16,7 @@ from pathlib import Path
 STABLE_RUNTIME = 300
 MAX_BACKOFF = 60
 STOP_TIMEOUT = 25
+DEFAULT_PYTHON = "/usr/bin/python3"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,6 +27,11 @@ logging.basicConfig(
 
 def restart_delay(failures: int) -> int:
     return min(MAX_BACKOFF, 2 ** min(max(1, int(failures)), 6))
+
+
+def python_executable() -> str:
+    """Return an absolute interpreter even when rcS starts without PATH."""
+    return sys.executable or DEFAULT_PYTHON
 
 
 class ManagerSupervisor:
@@ -102,7 +108,7 @@ def main():
         default=str(Path(__file__).with_name("mppsolar-manager.py")),
     )
     args = parser.parse_args()
-    supervisor = ManagerSupervisor([sys.executable, args.manager])
+    supervisor = ManagerSupervisor([python_executable(), args.manager])
     signal.signal(signal.SIGTERM, supervisor.request_stop)
     signal.signal(signal.SIGINT, supervisor.request_stop)
     return supervisor.run()

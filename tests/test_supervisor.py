@@ -2,6 +2,7 @@ import importlib.util
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 SPEC = importlib.util.spec_from_file_location(
@@ -17,6 +18,13 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(mppsolar_supervisor.restart_delay(1), 2)
         self.assertEqual(mppsolar_supervisor.restart_delay(2), 4)
         self.assertEqual(mppsolar_supervisor.restart_delay(20), 60)
+
+    def test_python_fallback_does_not_depend_on_rcs_path(self):
+        with mock.patch.object(mppsolar_supervisor.sys, "executable", ""):
+            self.assertEqual(
+                mppsolar_supervisor.python_executable(),
+                "/usr/bin/python3",
+            )
 
 
 if __name__ == "__main__":
